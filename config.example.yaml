@@ -1,0 +1,52 @@
+telegram_bot_token: "PUT_TOKEN_HERE"
+
+server:
+  server_id: "work_server_01"
+  server_name: "Work Office PC"
+
+security:
+  allowed_telegram_user_ids:
+    - 123456789
+    - 987654321
+
+paths:
+  base_storage_path: "D:/Product Media"
+  incoming_temp_path: "D:/Product Media/_incoming_temp"
+  database_path: "data/media_sorter.db"
+
+behavior:
+  delete_telegram_message_after_save: true
+  duplicate_action: "skip"
+  allow_new_folder: true
+  keep_original_filename: true
+
+categories:
+  - name: "Product Pics"
+    folders:
+      - name: "PM Hoist"
+        folders:
+          - name: "2026"
+          - name: "Control Panel"
+          - name: "Machine Photos"
+      - name: "Monkey Hoist"
+        folders:
+          - name: "2026"
+          - name: "Machine Photos"
+  - name: "Site Pics"
+    folders:
+      - name: "PM Hoist"
+        folders:
+          - name: "2026"
+          - name: "Customer Sites"
+      - name: "Concrete Mixer"
+        folders:
+          - name: "2026"
+          - name: "Customer Sites"
+
+logging:
+  level: "INFO"
+  file: "logs/media_sorter.log"
+
+webui:
+  host: "127.0.0.1"
+  port: 8080

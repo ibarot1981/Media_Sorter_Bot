@@ -1,0 +1,268 @@
+:root {
+  color-scheme: light;
+  --bg: #f4f1ea;
+  --paper: #fffdf8;
+  --ink: #1f2933;
+  --muted: #5b6975;
+  --border: #d8d0c3;
+  --accent: #1f6f78;
+  --accent-strong: #15535a;
+  --danger: #9a3412;
+  --success: #166534;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(31, 111, 120, 0.12), transparent 28%),
+    linear-gradient(180deg, #f9f5ee 0%, var(--bg) 100%);
+}
+
+.page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+.page-header {
+  margin-bottom: 20px;
+}
+
+.page-header h1 {
+  margin: 0 0 8px;
+  font-size: 2rem;
+}
+
+.page-header p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.section-copy {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.card {
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 18px;
+  box-shadow: 0 10px 28px rgba(31, 41, 51, 0.05);
+}
+
+.section-header,
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+}
+
+.grid-2 {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+label,
+.dynamic-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+textarea {
+  resize: vertical;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+button.primary:hover {
+  background: var(--accent-strong);
+}
+
+button.secondary {
+  background: #e7f4f5;
+  color: var(--accent-strong);
+}
+
+button.danger {
+  background: #ffe9e2;
+  color: var(--danger);
+}
+
+.checkbox-row {
+  flex-direction: row;
+  align-items: center;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
+.dynamic-list {
+  display: grid;
+  gap: 12px;
+}
+
+.dynamic-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr auto;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--border);
+  padding: 12px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.flash {
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+
+.flash-success {
+  background: #edfdf1;
+  border: 1px solid #bbf7d0;
+  color: var(--success);
+}
+
+.flash-error {
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  color: #9f1239;
+}
+
+.tree-editor,
+.tree-children {
+  display: grid;
+  gap: 14px;
+}
+
+.tree-category,
+.tree-node {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 14px;
+}
+
+.tree-node {
+  border-style: dashed;
+}
+
+.tree-node-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.tree-children {
+  margin-top: 12px;
+  margin-left: 18px;
+  padding-left: 14px;
+  border-left: 2px solid rgba(31, 111, 120, 0.16);
+}
+
+.empty-state {
+  margin: 0;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.import-toggle {
+  white-space: nowrap;
+}
+
+code {
+  background: rgba(31, 41, 51, 0.06);
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+@media (max-width: 720px) {
+  .page {
+    padding: 16px 12px 32px;
+  }
+
+  .page-header h1 {
+    font-size: 1.6rem;
+  }
+
+  .dynamic-row {
+    grid-template-columns: 1fr;
+  }
+
+  .tree-node-header {
+    grid-template-columns: 1fr;
+  }
+
+  .section-header,
+  .actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .header-actions {
+    justify-content: stretch;
+  }
+}

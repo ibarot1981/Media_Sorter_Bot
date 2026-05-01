@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Media Sorter Bot Config</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="page">
+    <header class="page-header">
+      <div>
+        <h1>Media Sorter Bot Config Editor</h1>
+        <p>Local-only configuration editor. Keep this UI bound to <code>127.0.0.1</code> unless you understand the security risks.</p>
+      </div>
+    </header>
+
+    {% if success_message %}
+    <section class="flash flash-success">
+      <strong>{{ success_message }}</strong>
+      {% if backup_path %}
+      <div>Backup created at <code>{{ backup_path }}</code></div>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% if error_message %}
+    <section class="flash flash-error">
+      <strong>Could not save configuration.</strong>
+      <div>{{ error_message }}</div>
+    </section>
+    {% endif %}
+
+    <form id="config-form" method="post" action="/save">
+      <input type="hidden" name="categories_json" id="categories-json">
+      <input type="hidden" name="import_categories_json" id="import-categories-json">
+
+      <section class="card">
+        <h2>Bot and Server</h2>
+        <div class="grid grid-2">
+          <label>
+            <span>Telegram Bot Token</span>
+            <input type="text" name="telegram_bot_token" value="{{ config.telegram_bot_token }}" required>
+          </label>
+          <label>
+            <span>Allowed Telegram User IDs</span>
+            <textarea name="allowed_user_ids" rows="4" required>{{ allowed_user_ids_text }}</textarea>
+          </label>
+          <label>
+            <span>Server ID</span>
+            <input type="text" name="server_id" value="{{ config.server.server_id }}" required>
+          </label>
+          <label>
+            <span>Server Name</span>
+            <input type="text" name="server_name" value="{{ config.server.server_name }}" required>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Paths and Behavior</h2>
+        <div class="grid grid-2">
+          <label>
+            <span>Base Storage Path</span>
+            <input type="text" name="base_storage_path" value="{{ config.paths.base_storage_path }}" required>
+          </label>
+          <label>
+            <span>Incoming Temp Path</span>
+            <input type="text" name="incoming_temp_path" value="{{ config.paths.incoming_temp_path }}" required>
+          </label>
+          <label>
+            <span>Database Path</span>
+            <input type="text" name="database_path" value="{{ config.paths.database_path }}" required>
+          </label>
+          <label>
+            <span>Delete Telegram Message After Save</span>
+            <select name="delete_after_save">
+              <option value="true" {% if config.behavior.delete_telegram_message_after_save %}selected{% endif %}>true</option>
+              <option value="false" {% if not config.behavior.delete_telegram_message_after_save %}selected{% endif %}>false</option>
+            </select>
+          </label>
+          <label>
+            <span>Duplicate Action</span>
+            <select name="duplicate_action">
+              <option value="skip" {% if config.behavior.duplicate_action == "skip" %}selected{% endif %}>skip</option>
+              <option value="ask" {% if config.behavior.duplicate_action == "ask" %}selected{% endif %}>ask</option>
+              <option value="save_anyway" {% if config.behavior.duplicate_action == "save_anyway" %}selected{% endif %}>save_anyway</option>
+            </select>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="allow_new_folder" {% if config.behavior.allow_new_folder %}checked{% endif %}>
+            <span>Allow "New Folder" during Telegram classification</span>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="keep_original_filename" {% if config.behavior.keep_original_filename %}checked{% endif %}>
+            <span>Keep original filename where Telegram provides one</span>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="create_missing_folders">
+            <span>Create missing folders on disk after saving</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Web UI and Logging</h2>
+        <div class="grid grid-2">
+          <label>
+            <span>Web UI Host</span>
+            <input type="text" name="webui_host" value="{{ config.webui.host }}">
+          </label>
+          <label>
+            <span>Web UI Port</span>
+            <input type="number" name="webui_port" min="1" max="65535" value="{{ config.webui.port }}">
+          </label>
+          <label>
+            <span>Logging Level</span>
+            <input type="text" name="logging_level" value="{{ config.logging.level }}">
+          </label>
+          <label>
+            <span>Logging File</span>
+            <input type="text" name="logging_file" value="{{ config.logging.file }}">
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-header">
+          <div>
+            <h2>Categories and Folder Trees</h2>
+            <p class="section-copy">Each category is a root folder. Add nested folders under it as deeply as you need.</p>
+            <p class="section-copy">Use disk import to merge folders found under the selected category roots into YAML. Missing disk folders are never pruned automatically.</p>
+          </div>
+          <div class="header-actions">
+            <button type="button" class="secondary" id="add-category">Add Category</button>
+            <button type="submit" class="secondary" formaction="/import-folders" formmethod="post" id="import-selected">
+              Import Selected From Disk
+            </button>
+          </div>
+        </div>
+        <div id="categories-editor" class="tree-editor"></div>
+      </section>
+
+      <div class="actions">
+        <button type="submit" class="primary">Save Configuration</button>
+        <button type="submit" class="secondary" formaction="/import-folders" formmethod="post">
+          Import Selected From Disk
+        </button>
+      </div>
+    </form>
+  </main>
+
+  <script>
+    const initialCategories = {{ categories_json | safe }};
+    let categories = JSON.parse(JSON.stringify(initialCategories));
+
+    const categoriesEditor = document.getElementById("categories-editor");
+
+    function cloneNode(node) {
+      return {
+        name: String(node?.name || ""),
+        folders: Array.isArray(node?.folders) ? node.folders.map(cloneNode) : [],
+      };
+    }
+
+    function cloneCategory(category) {
+      return {
+        ...cloneNode(category),
+        selected_for_import: Boolean(category?.selected_for_import),
+      };
+    }
+
+    function normalizeNodes(nodes) {
+      const seen = new Set();
+      const result = [];
+
+      nodes.forEach((node) => {
+        const name = String(node?.name || "").trim();
+        if (!name || seen.has(name)) {
+          return;
+        }
+
+        seen.add(name);
+        result.push({
+          name,
+          folders: normalizeNodes(Array.isArray(node?.folders) ? node.folders : []),
+        });
+      });
+
+      return result;
+    }
+
+    function renderFolderNodes(nodes, container) {
+      container.innerHTML = "";
+
+      if (!nodes.length) {
+        const emptyState = document.createElement("p");
+        emptyState.className = "empty-state";
+        emptyState.textContent = "No folders added here yet.";
+        container.appendChild(emptyState);
+        return;
+      }
+
+      nodes.forEach((node, index) => {
+        const card = document.createElement("div");
+        card.className = "tree-node";
+
+        const header = document.createElement("div");
+        header.className = "tree-node-header";
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = node.name;
+        input.placeholder = "Folder name";
+        input.addEventListener("input", (event) => {
+          node.name = event.target.value;
+        });
+
+        const addButton = document.createElement("button");
+        addButton.type = "button";
+        addButton.className = "secondary";
+        addButton.textContent = "Add Child Folder";
+        addButton.addEventListener("click", () => {
+          node.folders = Array.isArray(node.folders) ? node.folders : [];
+          node.folders.push({ name: "", folders: [] });
+          renderAll();
+        });
+
+        const removeButton = document.createElement("button");
+        removeButton.type = "button";
+        removeButton.className = "danger";
+        removeButton.textContent = "Remove";
+        removeButton.addEventListener("click", () => {
+          nodes.splice(index, 1);
+          renderAll();
+        });
+
+        header.appendChild(input);
+        header.appendChild(addButton);
+        header.appendChild(removeButton);
+
+        const children = document.createElement("div");
+        children.className = "tree-children";
+        renderFolderNodes(node.folders || [], children);
+
+        card.appendChild(header);
+        card.appendChild(children);
+        container.appendChild(card);
+      });
+    }
+
+    function renderCategories() {
+      categoriesEditor.innerHTML = "";
+
+      if (!categories.length) {
+        const emptyState = document.createElement("p");
+        emptyState.className = "empty-state";
+        emptyState.textContent = "Add at least one category to get started.";
+        categoriesEditor.appendChild(emptyState);
+        return;
+      }
+
+      categories.forEach((category, index) => {
+        const section = document.createElement("section");
+        section.className = "tree-category";
+
+        const header = document.createElement("div");
+        header.className = "tree-node-header";
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = category.name;
+        input.placeholder = "Category name";
+        input.addEventListener("input", (event) => {
+          category.name = event.target.value;
+        });
+
+        const importLabel = document.createElement("label");
+        importLabel.className = "checkbox-row import-toggle";
+
+        const importCheckbox = document.createElement("input");
+        importCheckbox.type = "checkbox";
+        importCheckbox.checked = Boolean(category.selected_for_import);
+        importCheckbox.addEventListener("change", (event) => {
+          category.selected_for_import = event.target.checked;
+        });
+
+        const importText = document.createElement("span");
+        importText.textContent = "Include in disk import";
+
+        importLabel.appendChild(importCheckbox);
+        importLabel.appendChild(importText);
+
+        const addFolderButton = document.createElement("button");
+        addFolderButton.type = "button";
+        addFolderButton.className = "secondary";
+        addFolderButton.textContent = "Add Root Folder";
+        addFolderButton.addEventListener("click", () => {
+          category.folders = Array.isArray(category.folders) ? category.folders : [];
+          category.folders.push({ name: "", folders: [] });
+          renderAll();
+        });
+
+        const removeButton = document.createElement("button");
+        removeButton.type = "button";
+        removeButton.className = "danger";
+        removeButton.textContent = "Remove Category";
+        removeButton.addEventListener("click", () => {
+          categories.splice(index, 1);
+          renderAll();
+        });
+
+        header.appendChild(input);
+        header.appendChild(importLabel);
+        header.appendChild(addFolderButton);
+        header.appendChild(removeButton);
+
+        const children = document.createElement("div");
+        children.className = "tree-children";
+        renderFolderNodes(category.folders || [], children);
+
+        section.appendChild(header);
+        section.appendChild(children);
+        categoriesEditor.appendChild(section);
+      });
+    }
+
+    function renderAll() {
+      categories = categories.map(cloneCategory);
+      renderCategories();
+    }
+
+    document.getElementById("add-category").addEventListener("click", () => {
+      categories.push({ name: "", folders: [], selected_for_import: false });
+      renderAll();
+    });
+
+    document.getElementById("config-form").addEventListener("submit", (event) => {
+      const normalizedCategories = normalizeNodes(categories);
+      const selectedImportCategories = categories
+        .filter((category) => category.selected_for_import && String(category.name || "").trim())
+        .map((category) => String(category.name).trim());
+
+      categories = normalizedCategories.map((category) => {
+        const isSelected = selectedImportCategories.includes(category.name);
+        return { ...category, selected_for_import: isSelected };
+      });
+
+      document.getElementById("categories-json").value = JSON.stringify(normalizedCategories);
+      document.getElementById("import-categories-json").value = JSON.stringify(selectedImportCategories);
+    });
+
+    renderAll();
+  </script>
+</body>
+</html>

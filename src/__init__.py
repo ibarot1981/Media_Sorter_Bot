@@ -1,0 +1,1 @@
+"""Media Sorter Bot package."""
