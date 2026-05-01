@@ -41,6 +41,7 @@ logs/*
 !logs/.gitkeep
 
 # Local config backups and machine-specific overrides
+config.yaml
 config.backup.*.yaml
 
 # IDE/editor files
