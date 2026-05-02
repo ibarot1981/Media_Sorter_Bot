@@ -30,6 +30,10 @@ class UserSession:
     batch_total: int = 0
     batch_processed: int = 0
     recent_destinations: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
+    batch_destination_category: Optional[str] = None
+    batch_destination_folder_path: tuple[str, ...] = field(default_factory=tuple)
+    batch_destination_remaining: int = 0
+    announce_new_folder_on_save: bool = False
 
 
 @dataclass(slots=True)

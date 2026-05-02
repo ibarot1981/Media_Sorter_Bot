@@ -144,6 +144,8 @@ class MediaSorterBot:
             await self._handle_recent_destination_selection(query, context.bot, user.id, data)
         elif data.startswith("folder:"):
             await self._handle_folder_selection(query, context.bot, user.id, data)
+        elif data.startswith("confirm:"):
+            await self._handle_destination_confirmation(query, context.bot, user.id, data)
         else:
             await query.answer("Unsupported action.", show_alert=True)
 
@@ -266,6 +268,21 @@ class MediaSorterBot:
             current_item.folder_path = [*current_item.folder_path, new_folder_name]
             self._ensure_folder_path_in_memory(current_item.category, current_item.folder_path)
             self._persist_folder_path_to_config(current_item.category, current_item.folder_path)
+            session.announce_new_folder_on_save = True
+            remaining_count = self._get_remaining_queue_count(user.id)
+            if remaining_count > 0:
+                session.stage = "confirm_destination"
+                await message.reply_text(
+                    self._build_destination_confirmation_text(
+                        current_item,
+                        selection_prefix="New folder created",
+                        remaining_count=remaining_count,
+                    ),
+                    reply_markup=self._build_destination_confirmation_keyboard(),
+                )
+                return
+
+            session.stage = None
             await self._finalize_current_item(user.id, context.bot, announce_new_folder=True)
 
     def _extract_media_info(self, message) -> Optional[dict[str, str]]:
@@ -342,12 +359,34 @@ class MediaSorterBot:
             session.stage = None
             session.batch_total = 0
             session.batch_processed = 0
+            session.announce_new_folder_on_save = False
+            self._clear_batch_destination(session)
             return
 
         session.current_item = user_queue.popleft()
-        session.stage = "category"
+        session.announce_new_folder_on_save = False
         current_index = session.batch_processed + 1
         total = session.batch_total
+
+        batch_destination = self._get_batch_destination(session)
+        if batch_destination:
+            category_name, folder_path = batch_destination
+            session.current_item.category = category_name
+            session.current_item.folder_path = list(folder_path)
+            session.stage = None
+            await bot.send_message(
+                chat_id=session.current_item.chat_id,
+                text=(
+                    f"Processing {current_index} of {total}\n"
+                    f"File: {session.current_item.original_file_name}\n\n"
+                    f"Using folder for remaining files:\n"
+                    f"{self._format_destination(category_name, session.current_item.folder_path)}"
+                ),
+            )
+            await self._finalize_current_item(user_id, bot, auto_applied_destination=True)
+            return
+
+        session.stage = "category"
 
         keyboard = self._build_start_keyboard(session)
         await bot.send_message(
@@ -417,14 +456,12 @@ class MediaSorterBot:
         current_item.category = category_name
         current_item.folder_path = list(folder_path)
 
-        await query.answer()
-        await query.edit_message_text(
-            f"Recent destination selected: {self._format_destination(category_name, current_item.folder_path)}"
+        await self._confirm_or_finalize_selected_destination(
+            user_id=user_id,
+            bot=bot,
+            source_message=query,
+            selection_prefix="Recent destination selected",
         )
-
-        lock = self._get_lock(user_id)
-        async with lock:
-            await self._finalize_current_item(user_id, bot)
 
     async def _handle_category_selection(self, query, user_id: int, data: str) -> None:
         self._refresh_runtime_config()
@@ -462,14 +499,12 @@ class MediaSorterBot:
         command = action[1] if len(action) > 1 else ""
 
         if command == "save":
-            await query.answer()
-            await query.edit_message_text(
-                f"Destination selected: {self._format_destination(current_item.category, current_item.folder_path)}"
+            await self._confirm_or_finalize_selected_destination(
+                user_id=user_id,
+                bot=bot,
+                source_message=query,
+                selection_prefix="Destination selected",
             )
-
-            lock = self._get_lock(user_id)
-            async with lock:
-                await self._finalize_current_item(user_id, bot)
             return
 
         if command == "new":
@@ -583,11 +618,131 @@ class MediaSorterBot:
         updated.insert(0, destination)
         session.recent_destinations = updated[: self.MAX_RECENT_DESTINATIONS]
 
+    def _clear_batch_destination(self, session: UserSession) -> None:
+        session.batch_destination_category = None
+        session.batch_destination_folder_path = ()
+        session.batch_destination_remaining = 0
+
+    def _set_batch_destination(self, session: UserSession, category_name: str, folder_path: list[str], remaining: int) -> None:
+        session.batch_destination_category = category_name
+        session.batch_destination_folder_path = tuple(folder_path)
+        session.batch_destination_remaining = max(0, remaining)
+
+    def _get_batch_destination(self, session: UserSession) -> Optional[tuple[str, tuple[str, ...]]]:
+        if not session.batch_destination_category or session.batch_destination_remaining <= 0:
+            self._clear_batch_destination(session)
+            return None
+
+        folder_path = list(session.batch_destination_folder_path)
+        if not self._folder_path_exists(session.batch_destination_category, folder_path):
+            self._clear_batch_destination(session)
+            return None
+
+        return session.batch_destination_category, session.batch_destination_folder_path
+
+    def _get_remaining_queue_count(self, user_id: int) -> int:
+        return len(self.user_queues[user_id])
+
+    def _build_destination_confirmation_text(
+        self,
+        item: QueuedMediaItem,
+        selection_prefix: str,
+        remaining_count: int,
+    ) -> str:
+        destination = self._format_destination(item.category or "", item.folder_path)
+        return (
+            f"{selection_prefix}: {destination}\n\n"
+            f"Apply this folder to the remaining {remaining_count} file(s) in the current queue?"
+        )
+
+    def _build_destination_confirmation_keyboard(self) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("This File Only", callback_data="confirm:once")],
+                [InlineKeyboardButton("Use for Remaining Files", callback_data="confirm:remaining")],
+            ]
+        )
+
+    async def _confirm_or_finalize_selected_destination(
+        self,
+        user_id: int,
+        bot,
+        source_message,
+        selection_prefix: str,
+    ) -> None:
+        session = self._get_session(user_id)
+        current_item = session.current_item
+        if not current_item or not current_item.category:
+            return
+
+        remaining_count = self._get_remaining_queue_count(user_id)
+        if remaining_count > 0:
+            session.stage = "confirm_destination"
+            await source_message.answer()
+            await source_message.edit_message_text(
+                self._build_destination_confirmation_text(current_item, selection_prefix, remaining_count),
+                reply_markup=self._build_destination_confirmation_keyboard(),
+            )
+            return
+
+        session.stage = None
+        await source_message.answer()
+        await source_message.edit_message_text(
+            f"{selection_prefix}: {self._format_destination(current_item.category, current_item.folder_path)}"
+        )
+
+        lock = self._get_lock(user_id)
+        async with lock:
+            await self._finalize_current_item(user_id, bot)
+
+    async def _handle_destination_confirmation(self, query, bot, user_id: int, data: str) -> None:
+        session = self._get_session(user_id)
+        current_item = session.current_item
+        if not current_item or not current_item.category:
+            await query.answer("No active file.", show_alert=True)
+            return
+
+        command = data.split(":", maxsplit=1)[1] if ":" in data else ""
+        if command not in {"once", "remaining"}:
+            await query.answer("Unsupported confirmation action.", show_alert=True)
+            return
+
+        if command == "remaining":
+            self._set_batch_destination(
+                session,
+                current_item.category,
+                current_item.folder_path,
+                remaining=self._get_remaining_queue_count(user_id),
+            )
+            confirmation_text = (
+                f"Destination selected for this file and the remaining "
+                f"{session.batch_destination_remaining} file(s): "
+                f"{self._format_destination(current_item.category, current_item.folder_path)}"
+            )
+        else:
+            confirmation_text = (
+                f"Destination selected: "
+                f"{self._format_destination(current_item.category, current_item.folder_path)}"
+            )
+
+        session.stage = None
+        await query.answer()
+        await query.edit_message_text(confirmation_text)
+
+        lock = self._get_lock(user_id)
+        async with lock:
+            await self._finalize_current_item(
+                user_id,
+                bot,
+                announce_new_folder=session.announce_new_folder_on_save,
+            )
+
     async def _finalize_current_item(
         self,
         user_id: int,
         bot,
         announce_new_folder: bool = False,
+        auto_applied_destination: bool = False,
     ) -> None:
         session = self._get_session(user_id)
         item = session.current_item
@@ -619,6 +774,11 @@ class MediaSorterBot:
                     f"New folder created: {self._format_destination(item.category, item.folder_path)}\n\n"
                     f"{save_message}"
                 )
+            if auto_applied_destination:
+                save_message = (
+                    f"Used remaining-files folder: {self._format_destination(item.category, item.folder_path)}\n\n"
+                    f"{save_message}"
+                )
             await bot.send_message(chat_id=item.chat_id, text=save_message)
 
             if self.config.behavior.delete_telegram_message_after_save:
@@ -626,8 +786,13 @@ class MediaSorterBot:
                     await bot.delete_message(chat_id=item.chat_id, message_id=item.message_id)
                 except Exception as exc:
                     self.logger.warning("Saved file but could not delete Telegram message: %s", exc)
+            if auto_applied_destination and session.batch_destination_remaining > 0:
+                session.batch_destination_remaining -= 1
+            if session.batch_destination_remaining <= 0:
+                self._clear_batch_destination(session)
         except Exception as exc:
             self.logger.exception("Failed to save media item: %s", exc)
+            self._clear_batch_destination(session)
             self._record_error(
                 user_id=item.user_id,
                 username=item.username,
@@ -648,6 +813,7 @@ class MediaSorterBot:
                 self.storage.cleanup_temp_file(item.temp_path)
             session.current_item = None
             session.stage = None
+            session.announce_new_folder_on_save = False
             session.batch_processed += 1
             await self._start_next_item(user_id, bot)
 
