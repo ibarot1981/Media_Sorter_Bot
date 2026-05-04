@@ -125,6 +125,52 @@
       </section>
 
       <section class="card">
+        <h2>Local Bot API</h2>
+        <div class="grid grid-2">
+          <label class="checkbox-row">
+            <input type="checkbox" name="local_bot_api_enabled" {% if config.local_bot_api.enabled %}checked{% endif %}>
+            <span>Enable Telegram Local Bot API mode</span>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="local_bot_api_auto_start" {% if config.local_bot_api.auto_start %}checked{% endif %}>
+            <span>Auto-start local Bot API server from startup script</span>
+          </label>
+          <label>
+            <span>Base URL</span>
+            <input type="text" name="local_bot_api_base_url" value="{{ config.local_bot_api.base_url }}">
+          </label>
+          <label>
+            <span>Base File URL</span>
+            <input type="text" name="local_bot_api_base_file_url" value="{{ config.local_bot_api.base_file_url }}">
+          </label>
+          <label>
+            <span>HTTP Host</span>
+            <input type="text" name="local_bot_api_http_host" value="{{ config.local_bot_api.http_host }}">
+          </label>
+          <label>
+            <span>HTTP Port</span>
+            <input type="number" name="local_bot_api_http_port" min="1" max="65535" value="{{ config.local_bot_api.http_port }}">
+          </label>
+          <label>
+            <span>Binary Path</span>
+            <input type="text" name="local_bot_api_binary_path" value="{{ config.local_bot_api.binary_path }}">
+          </label>
+          <label>
+            <span>Working Directory</span>
+            <input type="text" name="local_bot_api_working_dir" value="{{ config.local_bot_api.working_dir }}">
+          </label>
+          <label>
+            <span>Temp Directory</span>
+            <input type="text" name="local_bot_api_temp_dir" value="{{ config.local_bot_api.temp_dir }}">
+          </label>
+          <label>
+            <span>Server Log File</span>
+            <input type="text" name="local_bot_api_log_file" value="{{ config.local_bot_api.log_file }}">
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
         <div class="section-header">
           <div>
             <h2>Categories and Folder Trees</h2>

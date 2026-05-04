@@ -51,7 +51,7 @@ class MediaSorterBot:
         # TODO: For real multi-server operation with one shared bot token, move routing
         # out of local polling and into a central dispatcher, webhook gateway, or a
         # server_id-aware update assignment layer so only one installation claims each file.
-        self.application = Application.builder().token(config.telegram_bot_token).build()
+        self.application = self._build_application()
         self.application.add_handler(CommandHandler("start", self.start_command))
         self.application.add_handler(CommandHandler("server", self.start_command))
         self.application.add_handler(CallbackQueryHandler(self.handle_callback))
@@ -60,7 +60,22 @@ class MediaSorterBot:
         )
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text_message))
 
+    def _build_application(self) -> Application:
+        builder = Application.builder().token(self.config.telegram_bot_token)
+        if self.config.local_bot_api.enabled:
+            builder = (
+                builder.base_url(self.config.local_bot_api.base_url)
+                .base_file_url(self.config.local_bot_api.base_file_url)
+                .local_mode(True)
+            )
+        return builder.build()
+
     def run(self) -> None:
+        if self.config.local_bot_api.enabled:
+            self.logger.info(
+                "Starting Telegram polling bot in local Bot API mode via %s",
+                self.config.local_bot_api.base_url,
+            )
         self.logger.info("Starting Telegram polling bot for server_id=%s", self.config.server.server_id)
         self.application.run_polling(drop_pending_updates=False)
 

@@ -77,6 +77,20 @@ class WebUIConfig:
 
 
 @dataclass(slots=True)
+class LocalBotAPIConfig:
+    enabled: bool = False
+    auto_start: bool = True
+    base_url: str = "http://127.0.0.1:8081/bot"
+    base_file_url: str = "http://127.0.0.1:8081/file/bot"
+    http_host: str = "127.0.0.1"
+    http_port: int = 8081
+    binary_path: str = "telegram-bot-api.exe"
+    working_dir: str = "data/telegram-bot-api"
+    temp_dir: str = "data/telegram-bot-api/tmp"
+    log_file: str = "logs/telegram-bot-api.log"
+
+
+@dataclass(slots=True)
 class AppConfig:
     telegram_bot_token: str
     server: ServerConfig
@@ -86,6 +100,7 @@ class AppConfig:
     categories: list[CategoryConfig]
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     webui: WebUIConfig = field(default_factory=WebUIConfig)
+    local_bot_api: LocalBotAPIConfig = field(default_factory=LocalBotAPIConfig)
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -303,6 +318,34 @@ def load_config(config_path: Path) -> AppConfig:
         port=int(webui_raw.get("port", 8080)),
     )
 
+    local_bot_api_raw = raw_data.get("local_bot_api", {})
+    local_bot_api = LocalBotAPIConfig(
+        enabled=bool(local_bot_api_raw.get("enabled", False)),
+        auto_start=bool(local_bot_api_raw.get("auto_start", True)),
+        base_url=(
+            str(local_bot_api_raw.get("base_url", "http://127.0.0.1:8081/bot")).strip()
+            or "http://127.0.0.1:8081/bot"
+        ),
+        base_file_url=(
+            str(local_bot_api_raw.get("base_file_url", "http://127.0.0.1:8081/file/bot")).strip()
+            or "http://127.0.0.1:8081/file/bot"
+        ),
+        http_host=str(local_bot_api_raw.get("http_host", "127.0.0.1")).strip() or "127.0.0.1",
+        http_port=int(local_bot_api_raw.get("http_port", 8081)),
+        binary_path=str(local_bot_api_raw.get("binary_path", "telegram-bot-api.exe")).strip()
+        or "telegram-bot-api.exe",
+        working_dir=(
+            str(local_bot_api_raw.get("working_dir", "data/telegram-bot-api")).strip()
+            or "data/telegram-bot-api"
+        ),
+        temp_dir=(
+            str(local_bot_api_raw.get("temp_dir", "data/telegram-bot-api/tmp")).strip()
+            or "data/telegram-bot-api/tmp"
+        ),
+        log_file=str(local_bot_api_raw.get("log_file", "logs/telegram-bot-api.log")).strip()
+        or "logs/telegram-bot-api.log",
+    )
+
     return AppConfig(
         telegram_bot_token=telegram_bot_token,
         server=server,
@@ -312,6 +355,7 @@ def load_config(config_path: Path) -> AppConfig:
         categories=categories,
         logging=logging_config,
         webui=webui,
+        local_bot_api=local_bot_api,
     )
 
 

@@ -50,3 +50,15 @@ logging:
 webui:
   host: "127.0.0.1"
   port: 8080
+
+local_bot_api:
+  enabled: false
+  auto_start: true
+  base_url: "http://127.0.0.1:8081/bot"
+  base_file_url: "http://127.0.0.1:8081/file/bot"
+  http_host: "127.0.0.1"
+  http_port: 8081
+  binary_path: "telegram-bot-api.exe"
+  working_dir: "data/telegram-bot-api"
+  temp_dir: "data/telegram-bot-api/tmp"
+  log_file: "logs/telegram-bot-api.log"

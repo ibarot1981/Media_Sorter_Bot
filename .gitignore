@@ -15,6 +15,7 @@ dist/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
+.build-local-bot-api/
 
 # Test, type-check, and tool caches
 .pytest_cache/
@@ -33,6 +34,12 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+
+# Keep the built local Bot API runtime files, but ignore its temporary build tree
+!telegram-bot-api.exe
+!libcrypto-3-x64.dll
+!libssl-3-x64.dll
+!z.dll
 
 # App-generated folders: keep placeholders, ignore contents
 data/*

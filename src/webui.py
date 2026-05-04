@@ -13,6 +13,7 @@ from src.config import (
     BehaviorConfig,
     CategoryConfig,
     FolderNode,
+    LocalBotAPIConfig,
     LoggingConfig,
     PathsConfig,
     SecurityConfig,
@@ -178,6 +179,26 @@ def _build_config_from_form(form) -> AppConfig:
             host=str(form.get("webui_host", "127.0.0.1")).strip() or "127.0.0.1",
             port=int(str(form.get("webui_port", "8080")).strip() or "8080"),
         ),
+        local_bot_api=LocalBotAPIConfig(
+            enabled=str(form.get("local_bot_api_enabled", "")) == "on",
+            auto_start=str(form.get("local_bot_api_auto_start", "")) == "on",
+            base_url=str(form.get("local_bot_api_base_url", "http://127.0.0.1:8081/bot")).strip()
+            or "http://127.0.0.1:8081/bot",
+            base_file_url=(
+                str(form.get("local_bot_api_base_file_url", "http://127.0.0.1:8081/file/bot")).strip()
+                or "http://127.0.0.1:8081/file/bot"
+            ),
+            http_host=str(form.get("local_bot_api_http_host", "127.0.0.1")).strip() or "127.0.0.1",
+            http_port=int(str(form.get("local_bot_api_http_port", "8081")).strip() or "8081"),
+            binary_path=str(form.get("local_bot_api_binary_path", "telegram-bot-api.exe")).strip()
+            or "telegram-bot-api.exe",
+            working_dir=str(form.get("local_bot_api_working_dir", "data/telegram-bot-api")).strip()
+            or "data/telegram-bot-api",
+            temp_dir=str(form.get("local_bot_api_temp_dir", "data/telegram-bot-api/tmp")).strip()
+            or "data/telegram-bot-api/tmp",
+            log_file=str(form.get("local_bot_api_log_file", "logs/telegram-bot-api.log")).strip()
+            or "logs/telegram-bot-api.log",
+        ),
     )
 
 
@@ -270,6 +291,13 @@ def _validate_config(config: AppConfig) -> None:
         raise ValueError("All path fields are required.")
     if config.behavior.duplicate_action not in {"skip", "ask", "save_anyway"}:
         raise ValueError("duplicate_action must be one of: skip, ask, save_anyway.")
+    if config.local_bot_api.enabled:
+        if not config.local_bot_api.base_url or not config.local_bot_api.base_file_url:
+            raise ValueError("local Bot API base_url and base_file_url are required when enabled.")
+        if not config.local_bot_api.binary_path:
+            raise ValueError("local Bot API binary_path is required when enabled.")
+        if config.local_bot_api.http_port < 1 or config.local_bot_api.http_port > 65535:
+            raise ValueError("local Bot API http_port must be between 1 and 65535.")
 
 
 def _create_missing_folders(config: AppConfig) -> None:
@@ -278,6 +306,9 @@ def _create_missing_folders(config: AppConfig) -> None:
     ensure_directory(Path(config.paths.incoming_temp_path))
     ensure_directory(Path(config.paths.database_path).parent)
     ensure_directory(Path(config.logging.file).parent)
+    ensure_directory(Path(config.local_bot_api.working_dir))
+    ensure_directory(Path(config.local_bot_api.temp_dir))
+    ensure_directory(Path(config.local_bot_api.log_file).parent)
 
     for category in config.categories:
         category_root = ensure_directory(base_path / category.name)

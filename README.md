@@ -32,6 +32,7 @@ media-sorter-bot/
   requirements.txt
   config.example.yaml
   config.yaml
+  botctl.bat
   src/
     main.py
     bot.py
@@ -47,6 +48,8 @@ media-sorter-bot/
   static/
     style.css
   scripts/
+    botctl.ps1
+    get_runtime_config.py
     install_debian_service.sh
     install_windows_task.ps1
   data/
@@ -76,6 +79,32 @@ In the current single-server flow, approved users are auto-activated for the run
 2. Run `/newbot`.
 3. Follow the prompts and copy the token.
 4. Paste the token into `config.yaml` under `telegram_bot_token`.
+
+## Control Commands
+
+Use the universal control wrapper from the project root:
+
+```powershell
+.\botctl.bat help
+```
+
+Main actions:
+
+- `.\botctl.bat start`
+- `.\botctl.bat start-background`
+- `.\botctl.bat stop`
+- `.\botctl.bat restart`
+- `.\botctl.bat status`
+- `.\botctl.bat logout`
+
+Notes:
+
+- `start` keeps the bot attached to the current terminal
+- `start-background` launches it in a hidden background PowerShell process
+- `stop` stops this repo's Python app, local Bot API server, and launcher
+- `restart` stops and starts again
+- `status` shows whether the repo's bot processes are currently running
+- `logout` performs Telegram's one-time cloud Bot API logout step
 
 ## Get Your Telegram User ID
 
@@ -147,6 +176,127 @@ Optional auto-start helper:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install_windows_task.ps1
 ```
+
+### Windows Local Bot API Mode
+
+Use this when you want large file support and both the Telegram Bot API server and this Python app will run on the same Windows machine.
+
+Important credential note:
+
+- `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` are tied to the Telegram application you create at `https://my.telegram.org`, not to a specific Windows machine and not to your bot token
+- you can reuse the same pair on another machine later by setting the same environment variables there
+- keep them secret, because they identify your Telegram application
+- Telegram's official docs say each phone number can only have one `api_id` connected to it, so you usually create these once and reuse them
+
+Setup:
+
+1. Download `telegram-bot-api.exe` from the official Telegram Bot API project and place it either:
+   - in the repo root, or
+   - somewhere on your `PATH`, or
+   - at a custom path configured in `local_bot_api.binary_path`
+2. Get your Telegram API credentials from `https://my.telegram.org`:
+
+   - sign in with your Telegram account
+   - open `API development tools`
+   - fill the form with values like:
+   - `App Title`: `Media Sorter Bot`
+   - `Short Name`: `mediasorterbot`
+   - `URL`: `http://localhost`
+   - `Platform`: `Desktop`
+   - `Description`: `Private local Telegram integration for my Media Sorter Bot on Windows`
+   - click `Create application`
+   - copy the `api_id` and `api_hash`
+
+3. Set your Telegram API credentials in the Windows user environment:
+
+```powershell
+setx TELEGRAM_API_ID "your_api_id"
+setx TELEGRAM_API_HASH "your_api_hash"
+```
+
+4. Close PowerShell, open a new PowerShell window, and verify the variables are available:
+
+```powershell
+echo $env:TELEGRAM_API_ID
+echo $env:TELEGRAM_API_HASH
+```
+
+5. Enable local mode in `config.yaml`:
+
+```yaml
+local_bot_api:
+  enabled: true
+  auto_start: true
+  base_url: "http://127.0.0.1:8081/bot"
+  base_file_url: "http://127.0.0.1:8081/file/bot"
+  http_host: "127.0.0.1"
+  http_port: 8081
+  binary_path: "telegram-bot-api.exe"
+  working_dir: "data/telegram-bot-api"
+  temp_dir: "data/telegram-bot-api/tmp"
+  log_file: "logs/telegram-bot-api.log"
+```
+
+6. Run the one-time cloud logout before your first local start:
+
+```powershell
+.\botctl.bat logout
+```
+
+7. Start everything in the foreground:
+
+```powershell
+.\botctl.bat start
+```
+
+To start everything in the background:
+
+```powershell
+.\botctl.bat start-background
+```
+
+To stop everything:
+
+```powershell
+.\botctl.bat stop
+```
+
+To restart everything:
+
+```powershell
+.\botctl.bat restart
+```
+
+To check whether it is running:
+
+```powershell
+.\botctl.bat status
+```
+
+What `botctl.bat start` now does:
+
+- starts `telegram-bot-api.exe` when `local_bot_api.enabled` and `local_bot_api.auto_start` are both true
+- waits for the local Bot API server to become ready
+- starts `python -m src.main --mode all`
+- stops the local Bot API process when the Python app exits
+
+What `botctl.bat start-background` now does:
+
+- launches the same startup flow in a hidden background PowerShell process
+- refuses to start if this repo's bot processes already appear to be running
+- leaves the services running after the launch command returns
+- pairs with `botctl.bat stop` and `botctl.bat restart`
+
+Notes:
+
+- this mode is for same-machine use only
+- `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` come from `https://my.telegram.org`
+- a regular PowerShell window is enough for this setup; admin PowerShell is not required
+- the current repo root already works with a locally built `telegram-bot-api.exe` plus its required DLLs
+- if you started the app in an interactive terminal and kept that window open, `Ctrl+C` in that same window will also stop both services cleanly
+- if you started the app with `botctl.bat start-background`, use `botctl.bat stop` to stop it because there is no attached interactive terminal
+- after a successful `logOut`, Telegram does not allow moving back to the cloud Bot API for about 10 minutes
+- if local mode is enabled and the local Bot API server is unavailable, startup fails fast instead of silently falling back
 
 ### Raspberry Pi / Debian
 
