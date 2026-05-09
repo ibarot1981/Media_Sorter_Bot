@@ -1,0 +1,24 @@
+categories:
+  - name: "Product Pics"
+    root_path: "D:/Product Media/Product Pics"
+    folders:
+      - name: "PM Hoist"
+        folders:
+          - name: "2026"
+          - name: "Control Panel"
+          - name: "Machine Photos"
+      - name: "Monkey Hoist"
+        folders:
+          - name: "2026"
+          - name: "Machine Photos"
+  - name: "Site Pics"
+    root_path: "C:/Irshad/Sorted Media/Site Pics"
+    folders:
+      - name: "PM Hoist"
+        folders:
+          - name: "2026"
+          - name: "Customer Sites"
+      - name: "Concrete Mixer"
+        folders:
+          - name: "2026"
+          - name: "Customer Sites"

@@ -22,8 +22,9 @@ from src.config import AppConfig, load_config, save_config
 from src.database import Database
 from src.duplicates import DuplicateChecker
 from src.models import MediaRecord, QueuedMediaItem, UserSession
+from src.review_queue import ReviewQueueService
 from src.storage import StorageService
-from src.utils import clean_name, compute_sha256, sanitize_filename
+from src.utils import clean_name, compute_sha256, sanitize_filename, split_folder_input
 
 
 class MediaSorterBot:
@@ -42,6 +43,7 @@ class MediaSorterBot:
         self.database = database
         self.storage = storage
         self.duplicate_checker = duplicate_checker
+        self.review_queue = ReviewQueueService(config, config_path, database, storage, duplicate_checker)
         self.logger = logging.getLogger(__name__)
 
         self.sessions: dict[int, UserSession] = {}
@@ -53,7 +55,11 @@ class MediaSorterBot:
         # server_id-aware update assignment layer so only one installation claims each file.
         self.application = self._build_application()
         self.application.add_handler(CommandHandler("start", self.start_command))
+        self.application.add_handler(CommandHandler("help", self.start_command))
         self.application.add_handler(CommandHandler("server", self.start_command))
+        self.application.add_handler(CommandHandler("reviewqueue", self.review_queue_command))
+        self.application.add_handler(CommandHandler("pending_batches", self.review_queue_command))
+        self.application.add_handler(CommandHandler("latestbatch", self.latest_batch_command))
         self.application.add_handler(CallbackQueryHandler(self.handle_callback))
         self.application.add_handler(
             MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL, self.handle_media_message)
@@ -103,6 +109,7 @@ class MediaSorterBot:
         self.config = latest_config
         self.storage.refresh_config(latest_config)
         self.duplicate_checker.duplicate_action = latest_config.behavior.duplicate_action
+        self.review_queue.refresh_runtime_config()
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
@@ -114,15 +121,128 @@ class MediaSorterBot:
                 await update.effective_message.reply_text("You are not authorized to use this bot.")
             return
 
+        self._refresh_runtime_config()
         self._ensure_active_server(user.id)
+        keyboard = self._build_start_action_keyboard()
+        help_lines = [
+            "Available commands:",
+            "/start - activate this server and show this help",
+            "/help - show this help again",
+            "/server - activate this server and show this help",
+        ]
+        if self.config.review_queue.enabled:
+            help_lines.extend(
+                [
+                    "/reviewqueue - list pending Syncthing review batches",
+                    "/latestbatch - open the latest pending Syncthing batch",
+                ]
+            )
+        help_lines.append("Send photos, videos, or documents directly to classify and save them.")
+
+        review_line = (
+            "\nUse the review actions below whenever you want to reopen Syncthing review work."
+            if keyboard
+            else ""
+        )
         await update.effective_message.reply_text(
             (
                 "Server auto-activated for this chat session.\n"
                 f"Name: {self.config.server.server_name}\n"
                 f"ID: {self.config.server.server_id}\n\n"
-                "You can now send photos, videos, or documents to classify and save."
-            )
+                + "\n".join(help_lines)
+                + f"{review_line}"
+            ),
+            reply_markup=keyboard,
         )
+
+    async def review_queue_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user = update.effective_user
+        message = update.effective_message
+        if not user or not message:
+            return
+
+        if not self._is_allowed_user(user.id):
+            await message.reply_text("You are not authorized to use this bot.")
+            return
+
+        self._ensure_active_server(user.id)
+        self._refresh_runtime_config()
+        if not self.config.review_queue.enabled:
+            await message.reply_text("Syncthing review queue is currently disabled in config.yaml.")
+            return
+        await message.reply_text(
+            self.review_queue.build_pending_batches_message(limit=5),
+            reply_markup=self._build_review_actions_keyboard(),
+        )
+
+    async def latest_batch_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user = update.effective_user
+        message = update.effective_message
+        if not user or not message:
+            return
+
+        if not self._is_allowed_user(user.id):
+            await message.reply_text("You are not authorized to use this bot.")
+            return
+
+        self._ensure_active_server(user.id)
+        self._refresh_runtime_config()
+        if not self.config.review_queue.enabled:
+            await message.reply_text("Syncthing review queue is currently disabled in config.yaml.")
+            return
+        latest_batch = self.review_queue.get_latest_pending_batch()
+        if not latest_batch:
+            await message.reply_text(
+                "No pending Syncthing review batch is open right now.",
+                reply_markup=self._build_review_actions_keyboard(),
+            )
+            return
+
+        await message.reply_text(
+            (
+                f"Latest pending batch: {str(latest_batch['batch_token'])[:8]}\n"
+                f"Pending files: {latest_batch['pending_count']}"
+            ),
+            reply_markup=self._build_review_actions_keyboard(include_latest=True, latest_batch=latest_batch),
+        )
+
+    def _build_start_action_keyboard(self) -> InlineKeyboardMarkup | None:
+        if not self.config.review_queue.enabled:
+            return None
+        return self._build_review_actions_keyboard(include_latest=True)
+
+    def _build_review_actions_keyboard(
+        self,
+        *,
+        include_latest: bool = True,
+        latest_batch: dict | None = None,
+    ) -> InlineKeyboardMarkup | None:
+        if not self.config.review_queue.enabled:
+            return None
+
+        rows: list[list[InlineKeyboardButton]] = [
+            [
+                InlineKeyboardButton(
+                    "Open Review Queue",
+                    url=self.review_queue.build_review_dashboard_url(),
+                )
+            ]
+        ]
+
+        if include_latest:
+            latest_batch = latest_batch or self.review_queue.get_latest_pending_batch()
+            if latest_batch:
+                rows.insert(
+                    0,
+                    [
+                        InlineKeyboardButton(
+                            "Open Latest Batch",
+                            url=str(latest_batch["review_url"]),
+                        )
+                    ],
+                )
+
+        return InlineKeyboardMarkup(rows)
 
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
@@ -271,7 +391,10 @@ class MediaSorterBot:
         if not raw_folder_name:
             await message.reply_text("Please send a valid folder name.")
             return
-        new_folder_name = clean_name(raw_folder_name)
+        new_folder_parts = split_folder_input(raw_folder_name)
+        if not new_folder_parts:
+            await message.reply_text("Please send a valid folder name.")
+            return
 
         lock = self._get_lock(user.id)
         async with lock:
@@ -280,7 +403,7 @@ class MediaSorterBot:
                 await message.reply_text("No file is currently waiting for a new folder.")
                 return
 
-            current_item.folder_path = [*current_item.folder_path, new_folder_name]
+            current_item.folder_path = [*current_item.folder_path, *new_folder_parts]
             self._ensure_folder_path_in_memory(current_item.category, current_item.folder_path)
             self._persist_folder_path_to_config(current_item.category, current_item.folder_path)
             session.announce_new_folder_on_save = True
@@ -527,6 +650,7 @@ class MediaSorterBot:
             await query.answer()
             await query.edit_message_text(
                 "Send the new folder name for:\n"
+                "Use `/` to create nested folders.\n"
                 f"{self._format_destination(current_item.category, current_item.folder_path)}"
             )
             return
@@ -843,6 +967,8 @@ class MediaSorterBot:
         self.database.insert_record(
             MediaRecord(
                 server_id=self.config.server.server_id,
+                intake_source="telegram",
+                source_path="",
                 sha256_hash=item.sha256_hash,
                 original_file_name=item.original_file_name,
                 telegram_file_id=item.telegram_file_id,
@@ -873,6 +999,8 @@ class MediaSorterBot:
         self.database.insert_record(
             MediaRecord(
                 server_id=self.config.server.server_id,
+                intake_source="telegram",
+                source_path="",
                 sha256_hash=sha256_hash,
                 original_file_name=original_file_name,
                 telegram_file_id=telegram_file_id,

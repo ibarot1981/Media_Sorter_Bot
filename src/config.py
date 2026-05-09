@@ -29,13 +29,21 @@ class FolderNode:
 @dataclass(slots=True)
 class CategoryConfig:
     name: str
+    root_path: str = ""
     folders: list[FolderNode] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"name": self.name}
+        if self.root_path:
+            payload["root_path"] = self.root_path
         if self.folders:
             payload["folders"] = [folder.to_dict() for folder in self.folders]
         return payload
+
+
+@dataclass(slots=True)
+class FolderConfig:
+    categories_file: str = "categories.yaml"
 
 
 @dataclass(slots=True)
@@ -54,6 +62,9 @@ class PathsConfig:
     base_storage_path: str
     incoming_temp_path: str
     database_path: str
+    syncthing_inbox_path: str = ""
+    syncthing_processed_path: str = ""
+    review_thumbnail_path: str = "data/review-thumbnails"
 
 
 @dataclass(slots=True)
@@ -74,6 +85,21 @@ class LoggingConfig:
 class WebUIConfig:
     host: str = "127.0.0.1"
     port: int = 8080
+
+
+@dataclass(slots=True)
+class ReviewQueueConfig:
+    enabled: bool = False
+    poll_interval_seconds: int = 15
+    stable_file_age_seconds: int = 30
+    notification_batch_minutes: int = 5
+    batch_size_default: int = 15
+    review_base_url: str = ""
+    link_secret: str = ""
+    delete_inbox_file_after_save: bool = True
+    generate_image_thumbnails: bool = True
+    generate_video_thumbnails: bool = True
+    generate_pdf_previews: bool = True
 
 
 @dataclass(slots=True)
@@ -98,13 +124,18 @@ class AppConfig:
     paths: PathsConfig
     behavior: BehaviorConfig
     categories: list[CategoryConfig]
+    folder_config: FolderConfig = field(default_factory=FolderConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     webui: WebUIConfig = field(default_factory=WebUIConfig)
+    review_queue: ReviewQueueConfig = field(default_factory=ReviewQueueConfig)
     local_bot_api: LocalBotAPIConfig = field(default_factory=LocalBotAPIConfig)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, include_categories: bool = True) -> dict[str, Any]:
         payload = asdict(self)
-        payload["categories"] = [category.to_dict() for category in self.categories]
+        if include_categories:
+            payload["categories"] = [category.to_dict() for category in self.categories]
+        else:
+            payload.pop("categories", None)
         return payload
 
     def get_category(self, category_name: str) -> CategoryConfig | None:
@@ -130,6 +161,16 @@ class AppConfig:
             nodes = existing.folders
         return changed
 
+    def get_category_root_path(self, category_name: str) -> Path | None:
+        category = self.get_category(category_name)
+        if not category:
+            return None
+        if category.root_path.strip():
+            return Path(category.root_path.strip())
+        if self.paths.base_storage_path.strip():
+            return Path(self.paths.base_storage_path.strip()) / clean_name(category.name)
+        return None
+
     @property
     def category_names(self) -> list[str]:
         return [category.name for category in self.categories]
@@ -142,9 +183,11 @@ def _normalize_category_list(values: list[Any]) -> list[CategoryConfig]:
     for value in values:
         if isinstance(value, dict):
             raw_name = str(value.get("name", "")).strip()
+            raw_root_path = str(value.get("root_path", "")).strip()
             raw_folders = value.get("folders", [])
         else:
             raw_name = str(value).strip()
+            raw_root_path = ""
             raw_folders = []
 
         if not raw_name:
@@ -158,6 +201,7 @@ def _normalize_category_list(values: list[Any]) -> list[CategoryConfig]:
         categories.append(
             CategoryConfig(
                 name=name,
+                root_path=raw_root_path,
                 folders=_normalize_folder_nodes(raw_folders, field_name=f"categories[{name}].folders"),
             )
         )
@@ -231,7 +275,7 @@ def _load_legacy_category_list(raw_data: dict[str, Any]) -> list[CategoryConfig]
                     ),
                 )
             )
-        categories.append(CategoryConfig(name=category_name, folders=folders))
+        categories.append(CategoryConfig(name=category_name, root_path="", folders=folders))
 
     return categories
 
@@ -252,10 +296,46 @@ def _normalize_named_list(values: list[Any], field_name: str) -> list[str]:
     return unique_values
 
 
+def _read_yaml_file(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle) or {}
+
+
+def _resolve_categories_file(config_path: Path, folder_config: FolderConfig) -> Path:
+    raw_path = folder_config.categories_file.strip() or "categories.yaml"
+    categories_path = Path(raw_path)
+    if not categories_path.is_absolute():
+        categories_path = (config_path.parent / categories_path).resolve()
+    return categories_path
+
+
+def _load_categories(config_path: Path, raw_data: dict[str, Any], folder_config: FolderConfig) -> list[CategoryConfig]:
+    categories_path = _resolve_categories_file(config_path, folder_config)
+    if categories_path.exists():
+        categories_data = _read_yaml_file(categories_path)
+        raw_categories = categories_data.get("categories", [])
+    else:
+        raw_categories = raw_data.get("categories", [])
+        if folder_config.categories_file and not raw_categories:
+            raise ValueError(f"Categories file was not found: {categories_path}")
+
+    if not isinstance(raw_categories, list):
+        raise ValueError("categories must be a list.")
+
+    uses_nested_categories = raw_categories and all(isinstance(value, dict) for value in raw_categories) and (
+        any(isinstance(value, dict) and "folders" in value for value in raw_categories)
+        or ("products" not in raw_data and "folder_map" not in raw_data)
+    )
+
+    if uses_nested_categories:
+        return _normalize_category_list(raw_categories)
+    return _load_legacy_category_list(raw_data)
+
+
 def load_config(config_path: Path) -> AppConfig:
     with _CONFIG_IO_LOCK:
-        with config_path.open("r", encoding="utf-8") as handle:
-            raw_data = yaml.safe_load(handle) or {}
+        config_path = config_path.resolve()
+        raw_data = _read_yaml_file(config_path)
 
     telegram_bot_token = str(raw_data.get("telegram_bot_token", "")).strip()
     if not telegram_bot_token:
@@ -280,9 +360,15 @@ def load_config(config_path: Path) -> AppConfig:
         base_storage_path=str(paths_raw.get("base_storage_path", "")).strip(),
         incoming_temp_path=str(paths_raw.get("incoming_temp_path", "")).strip(),
         database_path=str(paths_raw.get("database_path", "")).strip(),
+        syncthing_inbox_path=str(paths_raw.get("syncthing_inbox_path", "")).strip(),
+        syncthing_processed_path=str(paths_raw.get("syncthing_processed_path", "")).strip(),
+        review_thumbnail_path=(
+            str(paths_raw.get("review_thumbnail_path", "data/review-thumbnails")).strip()
+            or "data/review-thumbnails"
+        ),
     )
-    if not paths.base_storage_path or not paths.incoming_temp_path or not paths.database_path:
-        raise ValueError("paths.base_storage_path, incoming_temp_path, and database_path are required.")
+    if not paths.incoming_temp_path or not paths.database_path:
+        raise ValueError("incoming_temp_path and database_path are required.")
 
     behavior_raw = raw_data.get("behavior", {})
     behavior = BehaviorConfig(
@@ -292,19 +378,11 @@ def load_config(config_path: Path) -> AppConfig:
         keep_original_filename=bool(behavior_raw.get("keep_original_filename", True)),
     )
 
-    raw_categories = raw_data.get("categories", [])
-    if not isinstance(raw_categories, list):
-        raise ValueError("categories must be a list.")
-
-    uses_nested_categories = raw_categories and all(isinstance(value, dict) for value in raw_categories) and (
-        any(isinstance(value, dict) and "folders" in value for value in raw_categories)
-        or ("products" not in raw_data and "folder_map" not in raw_data)
+    folder_config_raw = raw_data.get("folder_config", {})
+    folder_config = FolderConfig(
+        categories_file=str(folder_config_raw.get("categories_file", "categories.yaml")).strip() or "categories.yaml"
     )
-
-    if uses_nested_categories:
-        categories = _normalize_category_list(raw_categories)
-    else:
-        categories = _load_legacy_category_list(raw_data)
+    categories = _load_categories(config_path, raw_data, folder_config)
 
     logging_raw = raw_data.get("logging", {})
     logging_config = LoggingConfig(
@@ -316,6 +394,21 @@ def load_config(config_path: Path) -> AppConfig:
     webui = WebUIConfig(
         host=str(webui_raw.get("host", "127.0.0.1")).strip() or "127.0.0.1",
         port=int(webui_raw.get("port", 8080)),
+    )
+
+    review_queue_raw = raw_data.get("review_queue", {})
+    review_queue = ReviewQueueConfig(
+        enabled=bool(review_queue_raw.get("enabled", False)),
+        poll_interval_seconds=max(5, int(review_queue_raw.get("poll_interval_seconds", 15))),
+        stable_file_age_seconds=max(5, int(review_queue_raw.get("stable_file_age_seconds", 30))),
+        notification_batch_minutes=max(1, int(review_queue_raw.get("notification_batch_minutes", 5))),
+        batch_size_default=max(1, int(review_queue_raw.get("batch_size_default", 15))),
+        review_base_url=str(review_queue_raw.get("review_base_url", "")).strip(),
+        link_secret=str(review_queue_raw.get("link_secret", "")).strip(),
+        delete_inbox_file_after_save=bool(review_queue_raw.get("delete_inbox_file_after_save", True)),
+        generate_image_thumbnails=bool(review_queue_raw.get("generate_image_thumbnails", True)),
+        generate_video_thumbnails=bool(review_queue_raw.get("generate_video_thumbnails", True)),
+        generate_pdf_previews=bool(review_queue_raw.get("generate_pdf_previews", True)),
     )
 
     local_bot_api_raw = raw_data.get("local_bot_api", {})
@@ -353,14 +446,28 @@ def load_config(config_path: Path) -> AppConfig:
         paths=paths,
         behavior=behavior,
         categories=categories,
+        folder_config=folder_config,
         logging=logging_config,
         webui=webui,
+        review_queue=review_queue,
         local_bot_api=local_bot_api,
     )
 
 
+def _write_categories_file(config: AppConfig, config_path: Path) -> Path:
+    categories_path = _resolve_categories_file(config_path, config.folder_config)
+    categories_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"categories": [category.to_dict() for category in config.categories]}
+    temp_path = categories_path.with_name(f"{categories_path.name}.tmp")
+    with temp_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(payload, handle, sort_keys=False, allow_unicode=False)
+    temp_path.replace(categories_path)
+    return categories_path
+
+
 def save_config(config: AppConfig, config_path: Path, create_backup: bool = True) -> Path | None:
     with _CONFIG_IO_LOCK:
+        config_path = config_path.resolve()
         config_path.parent.mkdir(parents=True, exist_ok=True)
         backup_path: Path | None = None
 
@@ -369,9 +476,16 @@ def save_config(config: AppConfig, config_path: Path, create_backup: bool = True
             backup_path = config_path.with_name(f"config.backup.{timestamp}.yaml")
             backup_path.write_text(config_path.read_text(encoding="utf-8"), encoding="utf-8")
 
+            categories_path = _resolve_categories_file(config_path, config.folder_config)
+            if categories_path.exists():
+                categories_backup = categories_path.with_name(f"{categories_path.stem}.backup.{timestamp}{categories_path.suffix}")
+                categories_backup.write_text(categories_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+        main_payload = config.to_dict(include_categories=False)
         temp_path = config_path.with_name(f"{config_path.name}.tmp")
         with temp_path.open("w", encoding="utf-8") as handle:
-            yaml.safe_dump(config.to_dict(), handle, sort_keys=False, allow_unicode=False)
+            yaml.safe_dump(main_payload, handle, sort_keys=False, allow_unicode=False)
         temp_path.replace(config_path)
 
+        _write_categories_file(config, config_path)
         return backup_path

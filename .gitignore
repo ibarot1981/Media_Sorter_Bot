@@ -50,6 +50,8 @@ logs/*
 # Local config backups and machine-specific overrides
 config.yaml
 config.backup.*.yaml
+categories.yaml
+categories.backup.*.yaml
 
 # IDE/editor files
 .idea/

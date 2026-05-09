@@ -13,6 +13,9 @@ paths:
   base_storage_path: "D:/Product Media"
   incoming_temp_path: "D:/Product Media/_incoming_temp"
   database_path: "data/media_sorter.db"
+  syncthing_inbox_path: "D:/Product Media/_syncthing_inbox"
+  syncthing_processed_path: "D:/Product Media/_syncthing_processed"
+  review_thumbnail_path: "data/review-thumbnails"
 
 behavior:
   delete_telegram_message_after_save: true
@@ -20,28 +23,8 @@ behavior:
   allow_new_folder: true
   keep_original_filename: true
 
-categories:
-  - name: "Product Pics"
-    folders:
-      - name: "PM Hoist"
-        folders:
-          - name: "2026"
-          - name: "Control Panel"
-          - name: "Machine Photos"
-      - name: "Monkey Hoist"
-        folders:
-          - name: "2026"
-          - name: "Machine Photos"
-  - name: "Site Pics"
-    folders:
-      - name: "PM Hoist"
-        folders:
-          - name: "2026"
-          - name: "Customer Sites"
-      - name: "Concrete Mixer"
-        folders:
-          - name: "2026"
-          - name: "Customer Sites"
+folder_config:
+  categories_file: "categories.example.yaml"
 
 logging:
   level: "INFO"
@@ -50,6 +33,19 @@ logging:
 webui:
   host: "127.0.0.1"
   port: 8080
+
+review_queue:
+  enabled: false
+  poll_interval_seconds: 15
+  stable_file_age_seconds: 30
+  notification_batch_minutes: 5
+  batch_size_default: 15
+  review_base_url: "http://192.168.1.50:8080"
+  link_secret: ""
+  delete_inbox_file_after_save: true
+  generate_image_thumbnails: true
+  generate_video_thumbnails: true
+  generate_pdf_previews: true
 
 local_bot_api:
   enabled: false

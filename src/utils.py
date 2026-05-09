@@ -8,6 +8,7 @@ from typing import Iterable, List
 
 INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 WHITESPACE = re.compile(r"\s+")
+PATH_SEPARATOR = re.compile(r"[\\/]+")
 
 
 def dedupe_preserve_order(values: Iterable[str]) -> List[str]:
@@ -25,6 +26,11 @@ def clean_name(value: str) -> str:
     cleaned = WHITESPACE.sub(" ", cleaned)
     cleaned = cleaned.strip(" .")
     return cleaned or "untitled"
+
+
+def split_folder_input(value: str) -> list[str]:
+    parts = [part for part in PATH_SEPARATOR.split(value or "") if part.strip()]
+    return [clean_name(part) for part in parts]
 
 
 def sanitize_filename(file_name: str) -> str:

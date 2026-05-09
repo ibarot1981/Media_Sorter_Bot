@@ -62,7 +62,7 @@
         <div class="grid grid-2">
           <label>
             <span>Base Storage Path</span>
-            <input type="text" name="base_storage_path" value="{{ config.paths.base_storage_path }}" required>
+            <input type="text" name="base_storage_path" value="{{ config.paths.base_storage_path }}">
           </label>
           <label>
             <span>Incoming Temp Path</span>
@@ -71,6 +71,22 @@
           <label>
             <span>Database Path</span>
             <input type="text" name="database_path" value="{{ config.paths.database_path }}" required>
+          </label>
+          <label>
+            <span>Categories File</span>
+            <input type="text" name="categories_file" value="{{ config.folder_config.categories_file }}">
+          </label>
+          <label>
+            <span>Syncthing Inbox Path</span>
+            <input type="text" name="syncthing_inbox_path" value="{{ config.paths.syncthing_inbox_path }}">
+          </label>
+          <label>
+            <span>Syncthing Processed Path</span>
+            <input type="text" name="syncthing_processed_path" value="{{ config.paths.syncthing_processed_path }}">
+          </label>
+          <label>
+            <span>Review Thumbnail Path</span>
+            <input type="text" name="review_thumbnail_path" value="{{ config.paths.review_thumbnail_path }}">
           </label>
           <label>
             <span>Delete Telegram Message After Save</span>
@@ -125,6 +141,56 @@
       </section>
 
       <section class="card">
+        <h2>Syncthing Review Queue</h2>
+        <div class="grid grid-2">
+          <label class="checkbox-row">
+            <input type="checkbox" name="review_queue_enabled" {% if config.review_queue.enabled %}checked{% endif %}>
+            <span>Enable Syncthing inbox watcher and mobile review queue</span>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="review_queue_delete_inbox_file_after_save" {% if config.review_queue.delete_inbox_file_after_save %}checked{% endif %}>
+            <span>Move inbox file into final destination after save</span>
+          </label>
+          <label>
+            <span>Review Base URL</span>
+            <input type="text" name="review_queue_review_base_url" value="{{ config.review_queue.review_base_url }}" placeholder="http://your-private-host:8080">
+          </label>
+          <label>
+            <span>Link Secret (reserved for future link hardening)</span>
+            <input type="text" name="review_queue_link_secret" value="{{ config.review_queue.link_secret }}">
+          </label>
+          <label>
+            <span>Poll Interval Seconds</span>
+            <input type="number" name="review_queue_poll_interval_seconds" min="5" value="{{ config.review_queue.poll_interval_seconds }}">
+          </label>
+          <label>
+            <span>Stable File Age Seconds</span>
+            <input type="number" name="review_queue_stable_file_age_seconds" min="5" value="{{ config.review_queue.stable_file_age_seconds }}">
+          </label>
+          <label>
+            <span>Notification Batch Minutes</span>
+            <input type="number" name="review_queue_notification_batch_minutes" min="1" value="{{ config.review_queue.notification_batch_minutes }}">
+          </label>
+          <label>
+            <span>Batch Size Default</span>
+            <input type="number" name="review_queue_batch_size_default" min="1" value="{{ config.review_queue.batch_size_default }}">
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="review_queue_generate_image_thumbnails" {% if config.review_queue.generate_image_thumbnails %}checked{% endif %}>
+            <span>Generate image thumbnails for review cards</span>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="review_queue_generate_video_thumbnails" {% if config.review_queue.generate_video_thumbnails %}checked{% endif %}>
+            <span>Generate video poster-frame previews when possible</span>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="review_queue_generate_pdf_previews" {% if config.review_queue.generate_pdf_previews %}checked{% endif %}>
+            <span>Generate PDF first-page previews when possible</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
         <h2>Local Bot API</h2>
         <div class="grid grid-2">
           <label class="checkbox-row">
@@ -174,24 +240,37 @@
         <div class="section-header">
           <div>
             <h2>Categories and Folder Trees</h2>
-            <p class="section-copy">Each category is a root folder. Add nested folders under it as deeply as you need.</p>
-            <p class="section-copy">Use disk import to merge folders found under the selected category roots into YAML. Missing disk folders are never pruned automatically.</p>
+            <p class="section-copy">Use the tree on the left to browse categories and nested folders. The editor on the right updates the selected node.</p>
+            <p class="section-copy">Each category can use its own root path anywhere on the filesystem. If blank, it falls back to <code>base_storage_path/category_name</code>.</p>
           </div>
           <div class="header-actions">
             <button type="button" class="secondary" id="add-category">Add Category</button>
-            <button type="submit" class="secondary" formaction="/import-folders" formmethod="post" id="import-selected">
-              Import Selected From Disk
-            </button>
+            <button type="submit" class="secondary" formaction="/import-folders" formmethod="post" id="import-selected">Import Selected From Disk</button>
           </div>
         </div>
-        <div id="categories-editor" class="tree-editor"></div>
+
+        <div class="config-tree-layout">
+          <section class="config-tree-shell">
+            <div class="review-tree-header">
+              <span>Tree Navigator</span>
+              <button type="button" class="secondary small-button" id="collapse-config-tree">Collapse All</button>
+            </div>
+            <div id="config-tree" class="review-tree" aria-label="Configuration tree"></div>
+          </section>
+
+          <section class="config-detail-shell">
+            <div class="config-detail-header">
+              <strong>Selected Node</strong>
+              <span id="config-selection-summary">Nothing selected yet</span>
+            </div>
+            <div id="config-detail-panel" class="config-detail-panel"></div>
+          </section>
+        </div>
       </section>
 
       <div class="actions">
         <button type="submit" class="primary">Save Configuration</button>
-        <button type="submit" class="secondary" formaction="/import-folders" formmethod="post">
-          Import Selected From Disk
-        </button>
+        <button type="submit" class="secondary" formaction="/import-folders" formmethod="post">Import Selected From Disk</button>
       </div>
     </form>
   </main>
@@ -199,203 +278,467 @@
   <script>
     const initialCategories = {{ categories_json | safe }};
     let categories = JSON.parse(JSON.stringify(initialCategories));
+    let selectedNode = null;
+    const expandedConfigKeys = new Set();
 
-    const categoriesEditor = document.getElementById("categories-editor");
+    const configTree = document.getElementById("config-tree");
+    const configDetailPanel = document.getElementById("config-detail-panel");
+    const configSelectionSummary = document.getElementById("config-selection-summary");
+    const categoriesJsonInput = document.getElementById("categories-json");
+    const importCategoriesJsonInput = document.getElementById("import-categories-json");
 
-    function cloneNode(node) {
+    function cloneFolderNode(node) {
       return {
         name: String(node?.name || ""),
-        folders: Array.isArray(node?.folders) ? node.folders.map(cloneNode) : [],
+        folders: Array.isArray(node?.folders) ? node.folders.map(cloneFolderNode) : [],
       };
     }
 
     function cloneCategory(category) {
       return {
-        ...cloneNode(category),
+        name: String(category?.name || ""),
+        root_path: String(category?.root_path || ""),
+        folders: Array.isArray(category?.folders) ? category.folders.map(cloneFolderNode) : [],
         selected_for_import: Boolean(category?.selected_for_import),
       };
     }
 
-    function normalizeNodes(nodes) {
+    function normalizeFolderNodes(nodes) {
       const seen = new Set();
-      const result = [];
+      const normalized = [];
 
       nodes.forEach((node) => {
         const name = String(node?.name || "").trim();
         if (!name || seen.has(name)) {
           return;
         }
-
         seen.add(name);
-        result.push({
+        normalized.push({
           name,
-          folders: normalizeNodes(Array.isArray(node?.folders) ? node.folders : []),
+          folders: normalizeFolderNodes(Array.isArray(node?.folders) ? node.folders : []),
         });
       });
 
-      return result;
+      return normalized;
     }
 
-    function renderFolderNodes(nodes, container) {
-      container.innerHTML = "";
+    function normalizeCategories(values) {
+      const seen = new Set();
+      const normalized = [];
 
-      if (!nodes.length) {
-        const emptyState = document.createElement("p");
-        emptyState.className = "empty-state";
-        emptyState.textContent = "No folders added here yet.";
-        container.appendChild(emptyState);
-        return;
+      values.forEach((category) => {
+        const name = String(category?.name || "").trim();
+        if (!name || seen.has(name)) {
+          return;
+        }
+        seen.add(name);
+        normalized.push({
+          name,
+          root_path: String(category?.root_path || "").trim(),
+          folders: normalizeFolderNodes(Array.isArray(category?.folders) ? category.folders : []),
+        });
+      });
+
+      return normalized;
+    }
+
+    function getCategoryNode(categoryIndex) {
+      return categories[categoryIndex] || null;
+    }
+
+    function getFolderNode(categoryIndex, path) {
+      let nodes = getCategoryNode(categoryIndex)?.folders || [];
+      let currentNode = null;
+      path.forEach((index) => {
+        currentNode = nodes[index] || null;
+        nodes = currentNode?.folders || [];
+      });
+      return currentNode;
+    }
+
+    function getFolderSiblings(categoryIndex, path) {
+      if (!path.length) {
+        return getCategoryNode(categoryIndex)?.folders || [];
+      }
+      const parentPath = path.slice(0, -1);
+      const parent = getFolderNode(categoryIndex, parentPath);
+      return parent?.folders || [];
+    }
+
+    function getConfigKey(type, categoryIndex, path = []) {
+      return `${type}:${categoryIndex}:${path.join(".")}`;
+    }
+
+    function ensureExpanded(type, categoryIndex, path = []) {
+      if (type === "folder") {
+        expandedConfigKeys.add(getConfigKey("category", categoryIndex));
+      }
+      const traversed = [];
+      path.forEach((index) => {
+        traversed.push(index);
+        expandedConfigKeys.add(getConfigKey("folder", categoryIndex, [...traversed]));
+      });
+    }
+
+    function selectCategory(categoryIndex) {
+      selectedNode = { type: "category", categoryIndex, path: [] };
+      expandedConfigKeys.add(getConfigKey("category", categoryIndex));
+      renderAll();
+    }
+
+    function selectFolder(categoryIndex, path) {
+      selectedNode = { type: "folder", categoryIndex, path: [...path] };
+      ensureExpanded("folder", categoryIndex, path);
+      renderAll();
+    }
+
+    function isSelected(type, categoryIndex, path = []) {
+      if (!selectedNode) {
+        return false;
+      }
+      return (
+        selectedNode.type === type &&
+        selectedNode.categoryIndex === categoryIndex &&
+        JSON.stringify(selectedNode.path || []) === JSON.stringify(path)
+      );
+    }
+
+    function toggleExpanded(key) {
+      if (expandedConfigKeys.has(key)) {
+        expandedConfigKeys.delete(key);
+      } else {
+        expandedConfigKeys.add(key);
+      }
+      renderConfigTree();
+    }
+
+    function buildFolderTreeNode(categoryIndex, node, path) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "review-tree-node";
+
+      const row = document.createElement("div");
+      row.className = "review-tree-row";
+
+      const hasChildren = Array.isArray(node.folders) && node.folders.length > 0;
+      const key = getConfigKey("folder", categoryIndex, path);
+      const isExpanded = expandedConfigKeys.has(key);
+
+      if (hasChildren) {
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "tree-toggle";
+        toggle.textContent = isExpanded ? "-" : "+";
+        toggle.addEventListener("click", () => toggleExpanded(key));
+        row.appendChild(toggle);
+      } else {
+        const spacer = document.createElement("span");
+        spacer.className = "tree-spacer";
+        row.appendChild(spacer);
       }
 
-      nodes.forEach((node, index) => {
-        const card = document.createElement("div");
-        card.className = "tree-node";
+      const selectButton = document.createElement("button");
+      selectButton.type = "button";
+      selectButton.className = "tree-select";
+      if (isSelected("folder", categoryIndex, path)) {
+        selectButton.classList.add("selected");
+      }
+      selectButton.textContent = node.name || "(unnamed folder)";
+      selectButton.addEventListener("click", () => selectFolder(categoryIndex, path));
+      row.appendChild(selectButton);
+      wrapper.appendChild(row);
 
-        const header = document.createElement("div");
-        header.className = "tree-node-header";
-
-        const input = document.createElement("input");
-        input.type = "text";
-        input.value = node.name;
-        input.placeholder = "Folder name";
-        input.addEventListener("input", (event) => {
-          node.name = event.target.value;
-        });
-
-        const addButton = document.createElement("button");
-        addButton.type = "button";
-        addButton.className = "secondary";
-        addButton.textContent = "Add Child Folder";
-        addButton.addEventListener("click", () => {
-          node.folders = Array.isArray(node.folders) ? node.folders : [];
-          node.folders.push({ name: "", folders: [] });
-          renderAll();
-        });
-
-        const removeButton = document.createElement("button");
-        removeButton.type = "button";
-        removeButton.className = "danger";
-        removeButton.textContent = "Remove";
-        removeButton.addEventListener("click", () => {
-          nodes.splice(index, 1);
-          renderAll();
-        });
-
-        header.appendChild(input);
-        header.appendChild(addButton);
-        header.appendChild(removeButton);
-
+      if (hasChildren) {
         const children = document.createElement("div");
-        children.className = "tree-children";
-        renderFolderNodes(node.folders || [], children);
+        children.className = "review-tree-children";
+        children.hidden = !isExpanded;
+        node.folders.forEach((childNode, childIndex) => {
+          children.appendChild(buildFolderTreeNode(categoryIndex, childNode, [...path, childIndex]));
+        });
+        wrapper.appendChild(children);
+      }
 
-        card.appendChild(header);
-        card.appendChild(children);
-        container.appendChild(card);
-      });
+      return wrapper;
     }
 
-    function renderCategories() {
-      categoriesEditor.innerHTML = "";
+    function renderConfigTree() {
+      configTree.innerHTML = "";
 
       if (!categories.length) {
         const emptyState = document.createElement("p");
         emptyState.className = "empty-state";
         emptyState.textContent = "Add at least one category to get started.";
-        categoriesEditor.appendChild(emptyState);
+        configTree.appendChild(emptyState);
         return;
       }
 
-      categories.forEach((category, index) => {
-        const section = document.createElement("section");
-        section.className = "tree-category";
+      categories.forEach((category, categoryIndex) => {
+        const categoryWrapper = document.createElement("div");
+        categoryWrapper.className = "review-tree-category";
 
-        const header = document.createElement("div");
-        header.className = "tree-node-header";
+        const categoryHeader = document.createElement("div");
+        categoryHeader.className = "review-tree-row review-tree-category-row";
 
-        const input = document.createElement("input");
-        input.type = "text";
-        input.value = category.name;
-        input.placeholder = "Category name";
-        input.addEventListener("input", (event) => {
-          category.name = event.target.value;
-        });
+        const hasChildren = Array.isArray(category.folders) && category.folders.length > 0;
+        const key = getConfigKey("category", categoryIndex);
+        const isExpanded = expandedConfigKeys.has(key);
 
-        const importLabel = document.createElement("label");
-        importLabel.className = "checkbox-row import-toggle";
+        if (hasChildren) {
+          const toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "tree-toggle";
+          toggle.textContent = isExpanded ? "-" : "+";
+          toggle.addEventListener("click", () => toggleExpanded(key));
+          categoryHeader.appendChild(toggle);
+        } else {
+          const spacer = document.createElement("span");
+          spacer.className = "tree-spacer";
+          categoryHeader.appendChild(spacer);
+        }
 
-        const importCheckbox = document.createElement("input");
-        importCheckbox.type = "checkbox";
-        importCheckbox.checked = Boolean(category.selected_for_import);
-        importCheckbox.addEventListener("change", (event) => {
-          category.selected_for_import = event.target.checked;
-        });
+        const categoryButton = document.createElement("button");
+        categoryButton.type = "button";
+        categoryButton.className = "tree-select tree-category-select";
+        if (isSelected("category", categoryIndex)) {
+          categoryButton.classList.add("selected");
+        }
+        categoryButton.textContent = category.name || "(unnamed category)";
+        categoryButton.addEventListener("click", () => selectCategory(categoryIndex));
+        categoryHeader.appendChild(categoryButton);
 
-        const importText = document.createElement("span");
-        importText.textContent = "Include in disk import";
+        if (category.selected_for_import) {
+          const badge = document.createElement("span");
+          badge.className = "summary-chip config-node-chip";
+          badge.textContent = "Import";
+          categoryHeader.appendChild(badge);
+        }
 
-        importLabel.appendChild(importCheckbox);
-        importLabel.appendChild(importText);
+        categoryWrapper.appendChild(categoryHeader);
 
-        const addFolderButton = document.createElement("button");
-        addFolderButton.type = "button";
-        addFolderButton.className = "secondary";
-        addFolderButton.textContent = "Add Root Folder";
-        addFolderButton.addEventListener("click", () => {
-          category.folders = Array.isArray(category.folders) ? category.folders : [];
-          category.folders.push({ name: "", folders: [] });
-          renderAll();
-        });
+        if (hasChildren) {
+          const children = document.createElement("div");
+          children.className = "review-tree-children";
+          children.hidden = !isExpanded;
+          category.folders.forEach((childNode, childIndex) => {
+            children.appendChild(buildFolderTreeNode(categoryIndex, childNode, [childIndex]));
+          });
+          categoryWrapper.appendChild(children);
+        }
 
-        const removeButton = document.createElement("button");
-        removeButton.type = "button";
-        removeButton.className = "danger";
-        removeButton.textContent = "Remove Category";
-        removeButton.addEventListener("click", () => {
-          categories.splice(index, 1);
-          renderAll();
-        });
-
-        header.appendChild(input);
-        header.appendChild(importLabel);
-        header.appendChild(addFolderButton);
-        header.appendChild(removeButton);
-
-        const children = document.createElement("div");
-        children.className = "tree-children";
-        renderFolderNodes(category.folders || [], children);
-
-        section.appendChild(header);
-        section.appendChild(children);
-        categoriesEditor.appendChild(section);
+        configTree.appendChild(categoryWrapper);
       });
+    }
+
+    function createField(labelText, value, onInput, placeholder = "", rerenderOnBlur = false) {
+      const label = document.createElement("label");
+      const span = document.createElement("span");
+      span.textContent = labelText;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = value;
+      input.placeholder = placeholder;
+      input.addEventListener("input", (event) => onInput(event.target.value));
+      if (rerenderOnBlur) {
+        input.addEventListener("blur", () => renderAll());
+      }
+      label.appendChild(span);
+      label.appendChild(input);
+      return label;
+    }
+
+    function renderCategoryInspector(categoryIndex) {
+      const category = getCategoryNode(categoryIndex);
+      if (!category) {
+        return;
+      }
+
+      configSelectionSummary.textContent = category.name || "(unnamed category)";
+      configDetailPanel.innerHTML = "";
+
+      const stack = document.createElement("div");
+      stack.className = "config-detail-stack";
+
+      stack.appendChild(
+        createField("Category Name", category.name, (value) => {
+          category.name = value;
+        }, "Category name", true)
+      );
+
+      stack.appendChild(
+        createField("Root Path", category.root_path || "", (value) => {
+          category.root_path = value;
+        }, "Optional root path, e.g. D:\\Media")
+      );
+
+      const importToggle = document.createElement("label");
+      importToggle.className = "checkbox-row";
+      const importCheckbox = document.createElement("input");
+      importCheckbox.type = "checkbox";
+      importCheckbox.checked = Boolean(category.selected_for_import);
+      importCheckbox.addEventListener("change", (event) => {
+        category.selected_for_import = event.target.checked;
+        renderConfigTree();
+      });
+      const importText = document.createElement("span");
+      importText.textContent = "Include this category in disk import";
+      importToggle.appendChild(importCheckbox);
+      importToggle.appendChild(importText);
+      stack.appendChild(importToggle);
+
+      const actions = document.createElement("div");
+      actions.className = "header-actions";
+
+      const addFolderButton = document.createElement("button");
+      addFolderButton.type = "button";
+      addFolderButton.className = "secondary";
+      addFolderButton.textContent = "Add Root Folder";
+      addFolderButton.addEventListener("click", () => {
+        category.folders.push({ name: "", folders: [] });
+        const newPath = [category.folders.length - 1];
+        selectFolder(categoryIndex, newPath);
+      });
+      actions.appendChild(addFolderButton);
+
+      const removeButton = document.createElement("button");
+      removeButton.type = "button";
+      removeButton.className = "danger";
+      removeButton.textContent = "Remove Category";
+      removeButton.addEventListener("click", () => {
+        categories.splice(categoryIndex, 1);
+        selectedNode = null;
+        renderAll();
+      });
+      actions.appendChild(removeButton);
+
+      stack.appendChild(actions);
+      configDetailPanel.appendChild(stack);
+    }
+
+    function renderFolderInspector(categoryIndex, path) {
+      const folder = getFolderNode(categoryIndex, path);
+      const category = getCategoryNode(categoryIndex);
+      if (!folder || !category) {
+        return;
+      }
+
+      const folderNames = [];
+      for (let depth = 0; depth < path.length; depth += 1) {
+        const currentNode = getFolderNode(categoryIndex, path.slice(0, depth + 1));
+        folderNames.push(currentNode?.name || "(unnamed folder)");
+      }
+      const folderPathLabel = [category.name || "(unnamed category)", ...folderNames].join(" / ");
+
+      configSelectionSummary.textContent = folderPathLabel;
+      configDetailPanel.innerHTML = "";
+
+      const stack = document.createElement("div");
+      stack.className = "config-detail-stack";
+
+      stack.appendChild(
+        createField("Folder Name", folder.name, (value) => {
+          folder.name = value;
+        }, "Folder name", true)
+      );
+
+      const pathInfo = document.createElement("p");
+      pathInfo.className = "section-copy";
+      pathInfo.textContent = `Path preview: ${folderPathLabel}`;
+      stack.appendChild(pathInfo);
+
+      const actions = document.createElement("div");
+      actions.className = "header-actions";
+
+      const addChildButton = document.createElement("button");
+      addChildButton.type = "button";
+      addChildButton.className = "secondary";
+      addChildButton.textContent = "Add Child Folder";
+      addChildButton.addEventListener("click", () => {
+        folder.folders.push({ name: "", folders: [] });
+        selectFolder(categoryIndex, [...path, folder.folders.length - 1]);
+      });
+      actions.appendChild(addChildButton);
+
+      const addSiblingButton = document.createElement("button");
+      addSiblingButton.type = "button";
+      addSiblingButton.className = "secondary";
+      addSiblingButton.textContent = "Add Sibling Folder";
+      addSiblingButton.addEventListener("click", () => {
+        const siblings = getFolderSiblings(categoryIndex, path);
+        siblings.push({ name: "", folders: [] });
+        const siblingPath = [...path.slice(0, -1), siblings.length - 1];
+        selectFolder(categoryIndex, siblingPath);
+      });
+      actions.appendChild(addSiblingButton);
+
+      const removeButton = document.createElement("button");
+      removeButton.type = "button";
+      removeButton.className = "danger";
+      removeButton.textContent = "Remove Folder";
+      removeButton.addEventListener("click", () => {
+        const siblings = getFolderSiblings(categoryIndex, path);
+        siblings.splice(path[path.length - 1], 1);
+        selectedNode = { type: "category", categoryIndex, path: [] };
+        renderAll();
+      });
+      actions.appendChild(removeButton);
+
+      stack.appendChild(actions);
+      configDetailPanel.appendChild(stack);
+    }
+
+    function renderConfigInspector() {
+      if (!selectedNode) {
+        configSelectionSummary.textContent = "Nothing selected yet";
+        configDetailPanel.innerHTML = '<p class="empty-state">Select a category or folder from the tree to edit it.</p>';
+        return;
+      }
+
+      if (selectedNode.type === "category") {
+        renderCategoryInspector(selectedNode.categoryIndex);
+        return;
+      }
+
+      renderFolderInspector(selectedNode.categoryIndex, selectedNode.path || []);
     }
 
     function renderAll() {
       categories = categories.map(cloneCategory);
-      renderCategories();
+      renderConfigTree();
+      renderConfigInspector();
     }
 
     document.getElementById("add-category").addEventListener("click", () => {
-      categories.push({ name: "", folders: [], selected_for_import: false });
+      categories.push({ name: "", root_path: "", folders: [], selected_for_import: false });
+      const newCategoryIndex = categories.length - 1;
+      selectedNode = { type: "category", categoryIndex: newCategoryIndex, path: [] };
+      expandedConfigKeys.add(getConfigKey("category", newCategoryIndex));
       renderAll();
     });
 
-    document.getElementById("config-form").addEventListener("submit", (event) => {
-      const normalizedCategories = normalizeNodes(categories);
+    document.getElementById("collapse-config-tree").addEventListener("click", () => {
+      expandedConfigKeys.clear();
+      renderConfigTree();
+    });
+
+    document.getElementById("config-form").addEventListener("submit", () => {
+      const normalizedCategories = normalizeCategories(categories);
       const selectedImportCategories = categories
         .filter((category) => category.selected_for_import && String(category.name || "").trim())
         .map((category) => String(category.name).trim());
 
-      categories = normalizedCategories.map((category) => {
-        const isSelected = selectedImportCategories.includes(category.name);
-        return { ...category, selected_for_import: isSelected };
-      });
+      categories = normalizedCategories.map((category) => ({
+        ...category,
+        selected_for_import: selectedImportCategories.includes(category.name),
+      }));
 
-      document.getElementById("categories-json").value = JSON.stringify(normalizedCategories);
-      document.getElementById("import-categories-json").value = JSON.stringify(selectedImportCategories);
+      categoriesJsonInput.value = JSON.stringify(normalizedCategories);
+      importCategoriesJsonInput.value = JSON.stringify(selectedImportCategories);
     });
 
+    categories = categories.map((category) => ({
+      ...cloneCategory(category),
+      selected_for_import: Boolean(category.selected_for_import),
+    }));
+    categories.forEach((_, categoryIndex) => expandedConfigKeys.add(getConfigKey("category", categoryIndex)));
     renderAll();
   </script>
 </body>

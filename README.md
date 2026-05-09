@@ -11,6 +11,7 @@ This repo implements:
 - Phase 1: Telegram upload handling, classification with inline buttons, local save, optional Telegram message deletion after successful save
 - Phase 2: YAML-driven config, SQLite record tracking, SHA-256 duplicate detection with default skip behavior
 - Phase 3: Local web UI for editing `config.yaml`, nested category folder-tree builder, and automatic backup before save
+- Phase 4: Optional Syncthing inbox intake, batched Telegram notifications, and a private mobile review web UI for batch sorting
 
 Current limitation:
 
@@ -37,6 +38,7 @@ media-sorter-bot/
     main.py
     bot.py
     webui.py
+    review_queue.py
     config.py
     storage.py
     database.py
@@ -45,6 +47,7 @@ media-sorter-bot/
     utils.py
   templates/
     config.html
+    review_queue.html
   static/
     style.css
   scripts/
@@ -72,6 +75,39 @@ media-sorter-bot/
 7. If configured, the original Telegram media message is deleted only after the local save succeeds.
 
 In the current single-server flow, approved users are auto-activated for the running server. `/start` is optional and mainly useful as a readiness check.
+
+## Syncthing Mobile Review Flow
+
+When `review_queue.enabled` is turned on, the app can also act as a Syncthing intake and phone-first review system:
+
+1. Syncthing delivers files into `paths.syncthing_inbox_path`.
+2. The watcher waits for files to become stable, hashes them, and checks duplicates against the shared SQLite history.
+3. New non-duplicate files enter the pending review queue.
+4. The app sends one Telegram summary notification per batch window with a link to the private review UI.
+5. You can later reopen pending work from Telegram with `/start`, `/reviewqueue`, or `/latestbatch` without waiting for another reminder.
+6. You open `/review/batch/{token}` on your phone, select files first, then choose the destination, and save or skip them.
+7. Saved items move into the configured category/folder destination and are recorded in the same duplicate DB as Telegram uploads.
+
+Current first-cut limitations for this flow:
+
+- image thumbnails are implemented
+- videos can generate poster-frame previews when ffmpeg support is available
+- PDFs can generate first-page previews when PyMuPDF support is available
+- unsupported document types still fall back to file-type tiles
+- review links are private-network style links; stronger signed-link auth is still pending
+- Telegram uploads still use the existing inline-button flow and do not join the review queue yet
+- pending batches are reopened manually from Telegram instead of repeating reminder messages every 5 minutes
+- source/media-type filters are still pending
+- per-item destination overrides inside the same batch are still pending
+- duplicate grouping inside the pending queue is still pending
+- smarter batching/session suppression beyond the first batch window is still pending
+
+Preview/runtime notes:
+
+- image previews require `Pillow`
+- video previews require both `Pillow` and `imageio-ffmpeg`
+- PDF previews require both `Pillow` and `PyMuPDF`
+- if preview support is disabled or missing when an item is first queued, that pending item keeps its fallback/failed preview state until you requeue it or add a preview-regeneration flow later
 
 ## Create The Telegram Bot
 
@@ -105,6 +141,15 @@ Notes:
 - `restart` stops and starts again
 - `status` shows whether the repo's bot processes are currently running
 - `logout` performs Telegram's one-time cloud Bot API logout step
+- `start` and `start-background` run the Telegram bot, review web UI, and Syncthing watcher together
+
+Telegram review shortcuts:
+
+- `/start`: activates the server session and shows the built-in help plus review links
+- `/help`: shows the same built-in help and review links
+- `/server`: alias for `/start`
+- `/reviewqueue`: shows pending Syncthing batches plus review links
+- `/latestbatch`: opens the latest pending Syncthing review batch
 
 ## Get Your Telegram User ID
 
@@ -129,24 +174,48 @@ Important fields:
 
 - `server.server_id`: unique ID for this installation
 - `server.server_name`: user-facing name shown in Telegram
-- `paths.base_storage_path`: root output folder
+- `paths.base_storage_path`: optional global fallback output root
 - `paths.incoming_temp_path`: temp download folder
 - `paths.database_path`: SQLite file path
+- `paths.syncthing_inbox_path`: watched Syncthing inbox root
+- `paths.syncthing_processed_path`: archive area for skipped/duplicate Syncthing items; this is not a destination root for categories
+- `paths.review_thumbnail_path`: cached review thumbnails
 - `behavior.delete_telegram_message_after_save`: delete Telegram message only after save succeeds
 - `behavior.duplicate_action`: default is `skip`
 - `behavior.allow_new_folder`: show `New Folder` option during classification
 - `categories`: category roots shown in Telegram, each with its own nested `folders` tree
+- `categories[].root_path`: optional per-category filesystem root; if set, saves/imports use this path directly
+- `review_queue.enabled`: turn on Syncthing watcher + review UI flow
+- `review_queue.review_base_url`: private URL that your phone can open for review links
+- `review_queue.notification_batch_minutes`: delay window used to batch new Syncthing notifications
+- `review_queue.batch_size_default`: how many pending items go into one review batch
+- `review_queue.generate_video_thumbnails`: generate poster-frame video previews for review cards
+- `review_queue.generate_pdf_previews`: generate first-page PDF previews for review cards
+- `folder_config.categories_file`: separate YAML file that stores the category tree and per-category root paths
 
 Sync behavior:
 
-- if a user creates a folder from Telegram, that new folder path is saved to disk and appended back into `config.yaml`
-- if you create folders directly on disk, use the web UI import action to merge them back into `config.yaml`
+- if a user creates a folder from Telegram, that new folder path is saved to disk and appended back into `categories.yaml`
+- in Telegram and the mobile review UI, typing a new folder name like `Trips/2026/Goa` creates nested folders under the selected destination
+- if you create folders directly on disk, use the web UI import action to merge them back into `categories.yaml`
 - disk import is additive only and does not remove missing folders from YAML automatically
+
+Config split behavior:
+
+- `config.yaml` holds runtime/app settings
+- `categories.yaml` holds the large folder/category tree
+- the app still loads old one-file configs, but future saves use the split-file layout
 
 Example final path:
 
 - Windows: `D:\Media\Kids\Birthdays\2026\image.jpg`
 - Linux: `/home/pi/media/Products/PM Hoist/Control Panel/image.jpg`
+
+Category root behavior:
+
+- if a category has `root_path`, that category saves directly under that filesystem path
+- if `root_path` is blank, the app falls back to `base_storage_path/<category_name>`
+- this lets different categories live on completely different drives or parent folders
 
 ## Install
 
@@ -156,19 +225,6 @@ Example final path:
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python -m src.main --mode bot
-```
-
-To run only the web editor:
-
-```powershell
-python -m src.main --mode webui
-```
-
-To run both:
-
-```powershell
-python -m src.main --mode all
 ```
 
 Optional auto-start helper:
@@ -277,7 +333,8 @@ What `botctl.bat start` now does:
 
 - starts `telegram-bot-api.exe` when `local_bot_api.enabled` and `local_bot_api.auto_start` are both true
 - waits for the local Bot API server to become ready
-- starts `python -m src.main --mode all`
+- starts the combined app stack
+- in `all` mode, runs the Telegram bot, the private web UI, and the Syncthing watcher loop together
 - stops the local Bot API process when the Python app exits
 
 What `botctl.bat start-background` now does:
@@ -298,35 +355,7 @@ Notes:
 - after a successful `logOut`, Telegram does not allow moving back to the cloud Bot API for about 10 minutes
 - if local mode is enabled and the local Bot API server is unavailable, startup fails fast instead of silently falling back
 
-### Raspberry Pi / Debian
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m src.main --mode bot
-```
-
-Run only the web editor:
-
-```bash
-python -m src.main --mode webui
-```
-
-Run both:
-
-```bash
-python -m src.main --mode all
-```
-
-Optional service helper:
-
-```bash
-chmod +x scripts/install_debian_service.sh
-./scripts/install_debian_service.sh
-```
-
-## Run The Web UI Config Editor
+## Web UI
 
 By default the UI runs at:
 
@@ -337,10 +366,15 @@ It lets you edit:
 - server ID and server name
 - approved Telegram user IDs
 - storage and temp paths
+- Syncthing review preview settings
 - categories and their nested folder trees
 - duplicate behavior
 - delete-after-save behavior
 - import selected category trees from disk into YAML
+
+The category editor now uses a tree-style navigator plus a detail panel, so browsing/editing folders matches the mobile review destination picker more closely.
+
+The mobile review UI also accepts slash-separated folder creation, so entering `folder1/folder2` while creating a new folder will create `folder1` with `folder2` inside it under the selected destination.
 
 When you save:
 
@@ -414,7 +448,29 @@ categories:
 
 In Telegram, the user first picks a category, then browses folders under that category until they choose the current folder or create a new one.
 
-If they create a new folder from Telegram, that folder path is also written back into `config.yaml` so the web UI stays in sync.
+If they create a new folder from Telegram, that folder path is also written back into the saved category tree so the web UI stays in sync. Slash-separated input such as `folder1/folder2` creates nested folders instead of one flattened folder name.
+
+## Review Roadmap
+
+Implemented already:
+
+- image thumbnails in the review queue
+- video poster-frame previews
+- PDF first-page previews
+- recent destination shortcuts
+- favorite destination shortcuts
+- manual pending-batch reopening from Telegram without reminder spam
+- item-first review flow on mobile
+
+Still pending from the Syncthing/mobile-review roadmap:
+
+- stronger signed-link or user-bound auth for review links
+- richer previews/icons for more document types
+- source and media-type filters in the review UI
+- per-item destination overrides inside one batch
+- duplicate grouping within the pending queue
+- optional Telegram-upload unification into the same review queue
+- smarter batching/session suppression based on active review sessions or backlog changes
 
 ## Multi-Server Design Notes
 
@@ -425,7 +481,7 @@ Each installation has its own:
 
 The current single-server session flow is:
 
-1. Send media directly, or send `/start` if you want a confirmation message
+1. Send media directly, or send `/start` if you want the readiness and review actions message
 2. The running installation auto-activates itself for that approved user session
 3. Upload media and classify it
 

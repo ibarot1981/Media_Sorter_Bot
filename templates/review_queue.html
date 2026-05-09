@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Media Sorter Review Queue</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="page review-page">
+    <header class="page-header">
+      <div>
+        <h1>Syncthing Review Queue</h1>
+        <p>Phone-friendly review page for files that arrived through the Syncthing inbox.</p>
+      </div>
+    </header>
+
+    {% if success_message %}
+    <section class="flash flash-success">
+      <strong>{{ success_message }}</strong>
+    </section>
+    {% endif %}
+
+    {% if error_message %}
+    <section class="flash flash-error">
+      <strong>Action could not be completed.</strong>
+      <div>{{ error_message }}</div>
+    </section>
+    {% endif %}
+
+    <section class="card review-summary">
+      <div>
+        <h2>{% if batch_token %}Batch Review{% else %}Queue Dashboard{% endif %}</h2>
+        <p class="section-copy">
+          Showing {{ total_items }} item(s), with {{ pending_count }} still pending review.
+        </p>
+      </div>
+      {% if batch_token %}
+      <div class="summary-chip">Batch token: <code>{{ batch_token }}</code></div>
+      {% endif %}
+    </section>
+
+    {% if not batch_token %}
+    <section class="card">
+      <div class="section-header">
+        <div>
+          <h2>Pending Batches</h2>
+          <p class="section-copy">Open any pending batch directly, or use the latest batch button from Telegram.</p>
+        </div>
+      </div>
+      {% if pending_batches %}
+      <div class="batch-list">
+        {% for batch in pending_batches %}
+        <article class="batch-card">
+          <div class="batch-card-meta">
+            <strong>Batch {{ batch.batch_token[:8] }}</strong>
+            <span>{{ batch.pending_count }} pending of {{ batch.item_count }} total</span>
+            <span>Status: {{ batch.status }}</span>
+            <span>Created: {{ batch.created_at }}</span>
+          </div>
+          <a class="button-link primary" href="/review/batch/{{ batch.batch_token }}">Open Batch</a>
+        </article>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="empty-state">
+        No Syncthing review batches are open right now.
+      </p>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    <section class="card">
+      <form id="review-form" method="post" action="{% if batch_token %}/review/batch/{{ batch_token }}/save{% else %}/review{% endif %}">
+        {% if batch_token %}
+        <div class="review-flow">
+          <div class="review-toolbar">
+            <div class="review-toolbar-copy">
+              <strong>Step 1: Select files</strong>
+              <span id="selection-count">0 item(s) selected</span>
+            </div>
+            <div class="review-toolbar-actions">
+              <button type="button" class="secondary" id="select-all">Select All Pending</button>
+              <button type="button" class="secondary" id="clear-selection">Clear</button>
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <p class="empty-state">
+          Open a Telegram batch link or a batch from the dashboard above to save or skip files.
+        </p>
+        {% endif %}
+
+        <div class="review-grid">
+          {% for item in items %}
+          <article class="review-card {% if item.status not in ['pending_review', 'notified', 'review_in_progress'] %}review-card-complete{% endif %}">
+            <div class="review-card-header">
+              {% if batch_token and item.status in ['pending_review', 'notified', 'review_in_progress'] %}
+              <label class="checkbox-row review-select">
+                <input type="checkbox" name="selected_item_ids" value="{{ item.id }}">
+                <span>Select</span>
+              </label>
+              {% else %}
+              <span class="status-pill">{{ item.status }}</span>
+              {% endif %}
+              <span class="status-pill">{{ item.source_label or 'Inbox' }}</span>
+            </div>
+
+            <div class="review-preview">
+              {% if item.thumbnail_url %}
+              <img src="{{ item.thumbnail_url }}" alt="Preview for {{ item.original_file_name }}">
+              {% else %}
+              <div class="file-placeholder">{{ item.file_label }}</div>
+              {% endif %}
+            </div>
+
+            <div class="review-meta">
+              <strong>{{ item.original_file_name }}</strong>
+              <span>{{ item.display_size_mb }} MB</span>
+              {% if item.width and item.height %}
+              <span>{{ item.width }} x {{ item.height }}</span>
+              {% endif %}
+              {% if item.display_duration %}
+              <span>Duration: {{ item.display_duration }}</span>
+              {% endif %}
+              {% if item.display_page_count %}
+              <span>Pages: {{ item.display_page_count }}</span>
+              {% endif %}
+              <span>{{ item.source_relative_path }}</span>
+              {% if item.preview_error %}
+              <span class="error-text">Preview fallback: {{ item.preview_error }}</span>
+              {% endif %}
+              {% if item.saved_path %}
+              <span>Saved/Archived: {{ item.saved_path }}</span>
+              {% endif %}
+              {% if item.duplicate_saved_path %}
+              <span>Duplicate of: {{ item.duplicate_saved_path }}</span>
+              {% endif %}
+              {% if item.error_message %}
+              <span class="error-text">{{ item.error_message }}</span>
+              {% endif %}
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+
+        {% if batch_token %}
+        <div class="review-toolbar review-toolbar-bottom">
+          <div class="review-destination-group">
+            <div class="review-step-heading">
+              <strong>Step 2: Choose destination</strong>
+              <span>Select files first, then choose where the selected files should be saved.</span>
+            </div>
+            {% if favorite_destinations %}
+            <div class="destination-shortcuts">
+              <span class="summary-label">Favorites</span>
+              <div class="shortcut-list">
+                {% for destination in favorite_destinations %}
+                <button
+                  type="button"
+                  class="shortcut-chip shortcut-chip-favorite"
+                  data-destination="{{ destination.destination_value }}"
+                >
+                  {{ destination.label }}
+                </button>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+            {% if recent_destinations %}
+            <div class="destination-shortcuts">
+              <span class="summary-label">Recent Destinations</span>
+              <div class="shortcut-list">
+                {% for destination in recent_destinations %}
+                <button
+                  type="button"
+                  class="shortcut-chip {% if destination.is_favorite %}shortcut-chip-favorite{% endif %}"
+                  data-destination="{{ destination.destination_value }}"
+                >
+                  {{ destination.label }}
+                </button>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+            <div class="review-tree-card">
+              <div class="review-tree-header">
+                <span>Destination Tree</span>
+                <button type="button" class="secondary small-button" id="collapse-tree">Collapse All</button>
+              </div>
+              <div id="review-tree" class="review-tree" aria-label="Destination tree"></div>
+            </div>
+            <input type="hidden" name="category_name" id="category-name-input">
+            <input type="hidden" name="selected_subfolder" id="selected-subfolder-input">
+            <input type="hidden" name="create_mode" id="create-mode-input" value="none">
+            <div class="review-selection-summary">
+              <span class="summary-label">Selected destination</span>
+              <strong id="selected-destination-preview">Nothing selected yet</strong>
+            </div>
+            <label class="checkbox-row review-create-toggle">
+              <input type="checkbox" id="create-child-toggle">
+              <span>Create a new child folder under the selected location</span>
+            </label>
+            <label class="review-destination review-destination-manual">
+              <span>New Folder Name</span>
+              <input
+                type="text"
+                name="new_folder_name"
+                id="new-folder-name-input"
+                placeholder="Use / for nested folders, for example 2026/Trip"
+                autocomplete="off"
+                disabled
+              >
+            </label>
+          </div>
+          <div class="review-toolbar-actions review-final-actions">
+            <div class="review-step-heading">
+              <strong>Step 3: Finish</strong>
+              <span>Skipping only needs selected files. Saving needs both selected files and a destination. You can also save the selected destination as a favorite.</span>
+            </div>
+            <button type="submit" class="secondary" id="save-favorite-button" formaction="/review/batch/{{ batch_token }}/favorite/add">Save Favorite</button>
+            <button type="submit" class="secondary" id="remove-favorite-button" formaction="/review/batch/{{ batch_token }}/favorite/remove">Remove Favorite</button>
+            <button type="submit" class="primary" id="save-selected-button" formaction="/review/batch/{{ batch_token }}/save">Save Selected</button>
+            <button type="submit" class="danger" id="skip-selected-button" formaction="/review/batch/{{ batch_token }}/skip">Skip Selected</button>
+          </div>
+        </div>
+        {% endif %}
+      </form>
+    </section>
+  </main>
+
+  <script>
+    const reviewCategoryCatalog = {{ review_category_catalog_json | safe }};
+    const selectAllButton = document.getElementById("select-all");
+    const clearSelectionButton = document.getElementById("clear-selection");
+    const checkboxes = Array.from(document.querySelectorAll('input[name="selected_item_ids"]'));
+    const reviewTree = document.getElementById("review-tree");
+    const collapseTreeButton = document.getElementById("collapse-tree");
+    const categoryNameInput = document.getElementById("category-name-input");
+    const selectedSubfolderInput = document.getElementById("selected-subfolder-input");
+    const createModeInput = document.getElementById("create-mode-input");
+    const createChildToggle = document.getElementById("create-child-toggle");
+    const newFolderNameInput = document.getElementById("new-folder-name-input");
+    const selectedDestinationPreview = document.getElementById("selected-destination-preview");
+    const selectionCount = document.getElementById("selection-count");
+    const saveSelectedButton = document.getElementById("save-selected-button");
+    const skipSelectedButton = document.getElementById("skip-selected-button");
+    const saveFavoriteButton = document.getElementById("save-favorite-button");
+    const removeFavoriteButton = document.getElementById("remove-favorite-button");
+    const reviewForm = document.getElementById("review-form");
+    const destinationShortcutButtons = Array.from(document.querySelectorAll("[data-destination]"));
+    let selectedNodeElement = null;
+    let selectedCategoryName = "";
+    let selectedSubfolderPath = "";
+
+    function syncNewFolderState() {
+      if (!createChildToggle || !newFolderNameInput || !createModeInput) {
+        return;
+      }
+
+      const isCreating = createChildToggle.checked;
+      createModeInput.value = isCreating ? "child" : "none";
+      newFolderNameInput.disabled = !isCreating;
+      if (!isCreating) {
+        newFolderNameInput.value = "";
+      }
+    }
+
+    function updateSelectedPreview() {
+      if (!selectedDestinationPreview) {
+        return;
+      }
+
+      if (!selectedCategoryName) {
+        selectedDestinationPreview.textContent = "Nothing selected yet";
+        return;
+      }
+
+      const basePath = selectedSubfolderPath
+        ? `${selectedCategoryName} / ${selectedSubfolderPath}`
+        : selectedCategoryName;
+
+      if (createChildToggle && createChildToggle.checked) {
+        selectedDestinationPreview.textContent = `${basePath} / [new folder]`;
+        return;
+      }
+
+      selectedDestinationPreview.textContent = basePath;
+    }
+
+    function getSelectedCount() {
+      return checkboxes.filter((checkbox) => checkbox.checked).length;
+    }
+
+    function syncSelectionState() {
+      const selectedCount = getSelectedCount();
+      if (selectionCount) {
+        selectionCount.textContent = `${selectedCount} item(s) selected`;
+      }
+      if (skipSelectedButton) {
+        skipSelectedButton.disabled = selectedCount === 0;
+      }
+      if (saveSelectedButton) {
+        saveSelectedButton.disabled = selectedCount === 0 || !selectedCategoryName;
+      }
+      if (saveFavoriteButton) {
+        saveFavoriteButton.disabled = !selectedCategoryName;
+      }
+      if (removeFavoriteButton) {
+        removeFavoriteButton.disabled = !selectedCategoryName;
+      }
+    }
+
+    function selectDestinationValue(destinationValue) {
+      const parts = String(destinationValue || "")
+        .split("/")
+        .map((part) => part.trim())
+        .filter(Boolean);
+      if (!parts.length) {
+        return;
+      }
+      selectedCategoryName = parts[0];
+      selectedSubfolderPath = parts.slice(1).join(" / ");
+      if (categoryNameInput) {
+        categoryNameInput.value = selectedCategoryName;
+      }
+      if (selectedSubfolderInput) {
+        selectedSubfolderInput.value = selectedSubfolderPath;
+      }
+      if (selectedNodeElement) {
+        selectedNodeElement.classList.remove("selected");
+        selectedNodeElement = null;
+      }
+      updateSelectedPreview();
+      syncSelectionState();
+    }
+
+    function selectTreeNode(buttonElement, categoryName, nodePath) {
+      selectedCategoryName = categoryName;
+      selectedSubfolderPath = nodePath || "";
+      if (categoryNameInput) {
+        categoryNameInput.value = categoryName;
+      }
+      if (selectedSubfolderInput) {
+        selectedSubfolderInput.value = nodePath || "";
+      }
+      if (selectedNodeElement) {
+        selectedNodeElement.classList.remove("selected");
+      }
+      selectedNodeElement = buttonElement;
+      if (selectedNodeElement) {
+        selectedNodeElement.classList.add("selected");
+      }
+      updateSelectedPreview();
+      syncSelectionState();
+    }
+
+    function createTreeNode(categoryName, node) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "review-tree-node";
+
+      const row = document.createElement("div");
+      row.className = "review-tree-row";
+
+      const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+      if (hasChildren) {
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "tree-toggle";
+        toggle.textContent = "+";
+        row.appendChild(toggle);
+
+        const children = document.createElement("div");
+        children.className = "review-tree-children";
+        children.hidden = true;
+        node.children.forEach((childNode) => {
+          children.appendChild(createTreeNode(categoryName, childNode));
+        });
+
+        toggle.addEventListener("click", () => {
+          const isHidden = children.hidden;
+          children.hidden = !isHidden;
+          toggle.textContent = isHidden ? "-" : "+";
+        });
+
+        const selectButton = document.createElement("button");
+        selectButton.type = "button";
+        selectButton.className = "tree-select";
+        selectButton.textContent = node.name;
+        selectButton.addEventListener("click", () => {
+          children.hidden = false;
+          toggle.textContent = "-";
+          selectTreeNode(selectButton, categoryName, node.path || "");
+        });
+        row.appendChild(selectButton);
+        wrapper.appendChild(row);
+        wrapper.appendChild(children);
+        return wrapper;
+      }
+
+      const spacer = document.createElement("span");
+      spacer.className = "tree-spacer";
+      spacer.textContent = "";
+      row.appendChild(spacer);
+
+      const selectButton = document.createElement("button");
+      selectButton.type = "button";
+      selectButton.className = "tree-select";
+      selectButton.textContent = node.name;
+      selectButton.addEventListener("click", () => {
+        selectTreeNode(selectButton, categoryName, node.path || "");
+      });
+      row.appendChild(selectButton);
+      wrapper.appendChild(row);
+      return wrapper;
+    }
+
+    function buildReviewTree() {
+      if (!reviewTree) {
+        return;
+      }
+
+      reviewTree.innerHTML = "";
+      reviewCategoryCatalog.forEach((category) => {
+        const categoryWrapper = document.createElement("div");
+        categoryWrapper.className = "review-tree-category";
+
+        const categoryHeader = document.createElement("div");
+        categoryHeader.className = "review-tree-row review-tree-category-row";
+
+        const hasChildren = Array.isArray(category.children) && category.children.length > 0;
+        let childrenContainer = null;
+        let toggle = null;
+        if (hasChildren) {
+          toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "tree-toggle";
+          toggle.textContent = "+";
+          categoryHeader.appendChild(toggle);
+        } else {
+          const spacer = document.createElement("span");
+          spacer.className = "tree-spacer";
+          categoryHeader.appendChild(spacer);
+        }
+
+        const categoryButton = document.createElement("button");
+        categoryButton.type = "button";
+        categoryButton.className = "tree-select tree-category-select";
+        categoryButton.textContent = category.name;
+        categoryButton.addEventListener("click", () => {
+          if (childrenContainer && toggle) {
+            childrenContainer.hidden = false;
+            toggle.textContent = "-";
+          }
+          selectTreeNode(categoryButton, category.name, "");
+        });
+        categoryHeader.appendChild(categoryButton);
+        categoryWrapper.appendChild(categoryHeader);
+
+        if (hasChildren) {
+          childrenContainer = document.createElement("div");
+          childrenContainer.className = "review-tree-children";
+          childrenContainer.hidden = true;
+          category.children.forEach((childNode) => {
+            childrenContainer.appendChild(createTreeNode(category.name, childNode));
+          });
+          toggle.addEventListener("click", () => {
+            const isHidden = childrenContainer.hidden;
+            childrenContainer.hidden = !isHidden;
+            toggle.textContent = isHidden ? "-" : "+";
+          });
+          categoryWrapper.appendChild(childrenContainer);
+        }
+
+        reviewTree.appendChild(categoryWrapper);
+      });
+    }
+
+    buildReviewTree();
+    syncNewFolderState();
+    updateSelectedPreview();
+    syncSelectionState();
+
+    if (createChildToggle) {
+      createChildToggle.addEventListener("change", () => {
+        syncNewFolderState();
+        updateSelectedPreview();
+        syncSelectionState();
+      });
+    }
+
+    if (collapseTreeButton && reviewTree) {
+      collapseTreeButton.addEventListener("click", () => {
+        reviewTree.querySelectorAll(".review-tree-children").forEach((node) => {
+          node.hidden = true;
+        });
+        reviewTree.querySelectorAll(".tree-toggle").forEach((toggle) => {
+          toggle.textContent = "+";
+        });
+      });
+    }
+
+    if (selectAllButton) {
+      selectAllButton.addEventListener("click", () => {
+        checkboxes.forEach((checkbox) => {
+          checkbox.checked = true;
+        });
+        syncSelectionState();
+      });
+    }
+
+    if (clearSelectionButton) {
+      clearSelectionButton.addEventListener("click", () => {
+        checkboxes.forEach((checkbox) => {
+          checkbox.checked = false;
+        });
+        syncSelectionState();
+      });
+    }
+
+    checkboxes.forEach((checkbox) => {
+      checkbox.addEventListener("change", syncSelectionState);
+    });
+
+    destinationShortcutButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        selectDestinationValue(button.dataset.destination || "");
+      });
+    });
+
+    if (reviewForm) {
+      reviewForm.addEventListener("submit", (event) => {
+        const submitter = event.submitter;
+        const selectedCount = getSelectedCount();
+        const isSaveAction = submitter && submitter.id === "save-selected-button";
+        const isSkipAction = submitter && submitter.id === "skip-selected-button";
+        const isFavoriteAction = submitter && (submitter.id === "save-favorite-button" || submitter.id === "remove-favorite-button");
+
+        if ((isSaveAction || isSkipAction) && selectedCount === 0) {
+          event.preventDefault();
+          window.alert("Select at least one file first.");
+          return;
+        }
+
+        if ((isSaveAction || isFavoriteAction) && !selectedCategoryName) {
+          event.preventDefault();
+          window.alert("Choose a destination first.");
+        }
+      });
+    }
+  </script>
+</body>
+</html>
