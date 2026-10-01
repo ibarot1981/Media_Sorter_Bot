@@ -52,6 +52,7 @@ config.yaml
 config.backup.*.yaml
 categories.yaml
 categories.backup.*.yaml
+backup/
 
 # IDE/editor files
 .idea/

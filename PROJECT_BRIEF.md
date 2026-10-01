@@ -206,7 +206,7 @@ Web UI requirements:
   - duplicate action
 - On submit, validate inputs and write back to config.yaml.
 - Make a backup before overwriting config:
-  config.backup.YYYYMMDD_HHMMSS.yaml
+  backup/config.backup.YYYYMMDD_HHMMSS.yaml
 - Do not expose Web UI publicly by default.
 - Bind to 127.0.0.1 unless configured otherwise.
 - Add warning in README that Web UI should not be exposed to internet.

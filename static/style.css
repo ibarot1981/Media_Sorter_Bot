@@ -156,6 +156,12 @@ button:disabled {
   color: #fff;
 }
 
+.button-link.secondary {
+  background: #e7f4f5;
+  color: var(--accent-strong);
+  border: 1px solid rgba(31, 111, 120, 0.16);
+}
+
 .checkbox-row {
   flex-direction: row;
   align-items: center;
@@ -529,6 +535,10 @@ td {
   gap: 14px;
 }
 
+.review-grid-completed {
+  margin-top: 14px;
+}
+
 .review-card {
   display: grid;
   gap: 12px;
@@ -540,6 +550,24 @@ td {
 
 .review-card-complete {
   opacity: 0.86;
+}
+
+.review-empty-state {
+  margin: 0;
+}
+
+.review-completed-shell {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 14px;
+}
+
+.review-completed-shell summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--text);
 }
 
 .review-card-header {

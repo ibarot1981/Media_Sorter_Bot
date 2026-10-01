@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from ipaddress import ip_network
 from pathlib import Path
 import threading
 from typing import Any
@@ -12,6 +13,17 @@ from src.utils import clean_name, dedupe_preserve_order
 
 
 _CONFIG_IO_LOCK = threading.RLock()
+
+DEFAULT_WEBUI_TRUSTED_NETWORKS = [
+    "127.0.0.0/8",
+    "::1/128",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "100.64.0.0/10",
+    "fc00::/7",
+    "fe80::/10",
+]
 
 
 @dataclass(slots=True)
@@ -85,6 +97,7 @@ class LoggingConfig:
 class WebUIConfig:
     host: str = "127.0.0.1"
     port: int = 8080
+    trusted_networks: list[str] = field(default_factory=lambda: list(DEFAULT_WEBUI_TRUSTED_NETWORKS))
 
 
 @dataclass(slots=True)
@@ -301,6 +314,30 @@ def _read_yaml_file(path: Path) -> dict[str, Any]:
         return yaml.safe_load(handle) or {}
 
 
+def normalize_trusted_networks(values: Any) -> list[str]:
+    if values is None:
+        return list(DEFAULT_WEBUI_TRUSTED_NETWORKS)
+    if not isinstance(values, list):
+        raise ValueError("webui.trusted_networks must be a list of IPv4 or IPv6 CIDR ranges.")
+
+    normalized: list[str] = []
+    for value in values:
+        raw_value = str(value).strip()
+        if not raw_value:
+            continue
+        try:
+            network = ip_network(raw_value, strict=False)
+        except ValueError as exc:
+            raise ValueError(f"Invalid trusted Web UI network: {raw_value}") from exc
+        canonical_value = str(network)
+        if canonical_value not in normalized:
+            normalized.append(canonical_value)
+
+    if not normalized:
+        raise ValueError("webui.trusted_networks must contain at least one network.")
+    return normalized
+
+
 def _resolve_categories_file(config_path: Path, folder_config: FolderConfig) -> Path:
     raw_path = folder_config.categories_file.strip() or "categories.yaml"
     categories_path = Path(raw_path)
@@ -394,6 +431,7 @@ def load_config(config_path: Path) -> AppConfig:
     webui = WebUIConfig(
         host=str(webui_raw.get("host", "127.0.0.1")).strip() or "127.0.0.1",
         port=int(webui_raw.get("port", 8080)),
+        trusted_networks=normalize_trusted_networks(webui_raw.get("trusted_networks")),
     )
 
     review_queue_raw = raw_data.get("review_queue", {})
@@ -465,6 +503,10 @@ def _write_categories_file(config: AppConfig, config_path: Path) -> Path:
     return categories_path
 
 
+def _resolve_backup_dir(config_path: Path) -> Path:
+    return config_path.parent / "backup"
+
+
 def save_config(config: AppConfig, config_path: Path, create_backup: bool = True) -> Path | None:
     with _CONFIG_IO_LOCK:
         config_path = config_path.resolve()
@@ -473,12 +515,14 @@ def save_config(config: AppConfig, config_path: Path, create_backup: bool = True
 
         if create_backup and config_path.exists():
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = config_path.with_name(f"config.backup.{timestamp}.yaml")
+            backup_dir = _resolve_backup_dir(config_path)
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_path = backup_dir / f"config.backup.{timestamp}.yaml"
             backup_path.write_text(config_path.read_text(encoding="utf-8"), encoding="utf-8")
 
             categories_path = _resolve_categories_file(config_path, config.folder_config)
             if categories_path.exists():
-                categories_backup = categories_path.with_name(f"{categories_path.stem}.backup.{timestamp}{categories_path.suffix}")
+                categories_backup = backup_dir / f"{categories_path.stem}.backup.{timestamp}{categories_path.suffix}"
                 categories_backup.write_text(categories_path.read_text(encoding="utf-8"), encoding="utf-8")
 
         main_payload = config.to_dict(include_categories=False)

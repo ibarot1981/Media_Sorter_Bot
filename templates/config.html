@@ -129,6 +129,11 @@
             <span>Web UI Port</span>
             <input type="number" name="webui_port" min="1" max="65535" value="{{ config.webui.port }}">
           </label>
+          <label class="grid-span-2">
+            <span>Trusted Web UI Networks</span>
+            <textarea name="webui_trusted_networks" rows="8">{{ config.webui.trusted_networks | join('\n') }}</textarea>
+            <small>One IPv4 or IPv6 CIDR range per line. Changes take effect after restarting the app.</small>
+          </label>
           <label>
             <span>Logging Level</span>
             <input type="text" name="logging_level" value="{{ config.logging.level }}">

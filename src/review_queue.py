@@ -173,8 +173,9 @@ class ReviewQueueService:
         self.logger.info("Re-sent Telegram review batch %s with %s pending item(s)", batch_token, len(pending_items))
         return batch_token
 
-    def list_dashboard_items(self, *, limit: int = 50) -> list[dict[str, Any]]:
-        self.refresh_runtime_config()
+    def list_dashboard_items(self, *, limit: int = 50, refresh_config: bool = True) -> list[dict[str, Any]]:
+        if refresh_config:
+            self.refresh_runtime_config()
         items = self.database.list_pending_items(statuses=PENDING_REVIEW_STATUSES, limit=limit)
         return [self._with_preview_context(item) for item in items]
 
@@ -187,8 +188,9 @@ class ReviewQueueService:
     def build_batch_review_url(self, batch_token: str) -> str:
         return self._build_review_url(batch_token)
 
-    def list_pending_batches(self, *, limit: int = 10) -> list[dict[str, Any]]:
-        self.refresh_runtime_config()
+    def list_pending_batches(self, *, limit: int = 10, refresh_config: bool = True) -> list[dict[str, Any]]:
+        if refresh_config:
+            self.refresh_runtime_config()
         batches = self.database.list_review_batches(statuses=OPEN_BATCH_STATUSES, limit=limit)
         summaries: list[dict[str, Any]] = []
 
@@ -245,8 +247,9 @@ class ReviewQueueService:
 
         return "\n".join(lines)
 
-    def get_batch_items(self, batch_token: str) -> list[dict[str, Any]]:
-        self.refresh_runtime_config()
+    def get_batch_items(self, batch_token: str, *, refresh_config: bool = True) -> list[dict[str, Any]]:
+        if refresh_config:
+            self.refresh_runtime_config()
         batch = self.database.get_review_batch(batch_token)
         if not batch:
             return []
@@ -254,16 +257,18 @@ class ReviewQueueService:
         items = self.database.list_batch_items(batch_token)
         return [self._with_preview_context(item) for item in items]
 
-    def build_destination_options(self) -> list[str]:
-        self.refresh_runtime_config()
+    def build_destination_options(self, *, refresh_config: bool = True) -> list[str]:
+        if refresh_config:
+            self.refresh_runtime_config()
         options: list[str] = []
         for category in self.config.categories:
             options.append(category.name)
             self._collect_folder_options(category.name, [], category.folders, options)
         return options
 
-    def list_recent_destinations(self, *, limit: int = 8) -> list[dict[str, Any]]:
-        self.refresh_runtime_config()
+    def list_recent_destinations(self, *, limit: int = 8, refresh_config: bool = True) -> list[dict[str, Any]]:
+        if refresh_config:
+            self.refresh_runtime_config()
         favorite_lookup = {
             (str(item["category"]), str(item["folder_path"] or ""))
             for item in self.database.list_favorite_destinations(limit=50)
@@ -279,8 +284,9 @@ class ReviewQueueService:
             for item in recent_items
         ]
 
-    def list_favorite_destinations(self, *, limit: int = 12) -> list[dict[str, Any]]:
-        self.refresh_runtime_config()
+    def list_favorite_destinations(self, *, limit: int = 12, refresh_config: bool = True) -> list[dict[str, Any]]:
+        if refresh_config:
+            self.refresh_runtime_config()
         favorites = self.database.list_favorite_destinations(limit=limit)
         return [
             self._build_destination_item(
