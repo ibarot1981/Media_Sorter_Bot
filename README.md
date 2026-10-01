@@ -379,7 +379,7 @@ The mobile review UI also accepts slash-separated folder creation, so entering `
 When you save:
 
 - input is validated
-- the current config is backed up as `config.backup.YYYYMMDD_HHMMSS.yaml`
+- the current config is backed up in `backup/config.backup.YYYYMMDD_HHMMSS.yaml`
 - `config.yaml` is rewritten
 - you can optionally create missing folders on disk
 
@@ -392,7 +392,11 @@ When you import selected categories from disk:
 Security warning:
 
 - Do not expose the web UI to the public internet.
-- Keep it bound to `127.0.0.1` unless you add your own network protection.
+- Keep it bound to `127.0.0.1` unless phone access over a trusted private network is required.
+- Every request is checked against `webui.trusted_networks`; public client addresses receive HTTP 403.
+- The default allowlist covers loopback, RFC1918 LAN ranges, private IPv6, link-local IPv6, and `100.64.0.0/10` for common private overlay networks.
+- Narrow the allowlist to your actual LAN or overlay subnet where practical, and restart the app after changing it.
+- The Web UI does not trust arbitrary public clients and should still not be forwarded directly from a public reverse proxy.
 
 ## Duplicate Detection
 

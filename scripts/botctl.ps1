@@ -240,7 +240,12 @@ function Show-RepoStatus {
 
     Write-Host "Media Sorter Bot is running for this repo:"
     $processes |
-        Select-Object Name, ProcessId, ParentProcessId, CommandLine |
+        Select-Object Name, ProcessId, ParentProcessId, @{Name = "CommandLine"; Expression = {
+            $safeCommandLine = [string]$_.CommandLine
+            $safeCommandLine = $safeCommandLine -replace '(?i)(--api-id(?:=|\s+))("[^"]*"|''[^'']*''|\S+)', '$1<redacted>'
+            $safeCommandLine = $safeCommandLine -replace '(?i)(--api-hash(?:=|\s+))("[^"]*"|''[^'']*''|\S+)', '$1<redacted>'
+            $safeCommandLine
+        }} |
         Format-List
 }
 

@@ -13,6 +13,11 @@
         <h1>Syncthing Review Queue</h1>
         <p>Phone-friendly review page for files that arrived through the Syncthing inbox.</p>
       </div>
+      {% if batch_token %}
+      <div class="header-actions">
+        <a class="button-link secondary" href="/review">Back to Pending Batches</a>
+      </div>
+      {% endif %}
     </header>
 
     {% if success_message %}
@@ -91,6 +96,113 @@
         </p>
         {% endif %}
 
+        {% if batch_token %}
+        {% if pending_items %}
+        <div class="review-grid">
+          {% for item in pending_items %}
+          <article class="review-card">
+            <div class="review-card-header">
+              <label class="checkbox-row review-select">
+                <input type="checkbox" name="selected_item_ids" value="{{ item.id }}">
+                <span>Select</span>
+              </label>
+              <span class="status-pill">{{ item.source_label or 'Inbox' }}</span>
+            </div>
+
+            <div class="review-preview">
+              {% if item.thumbnail_url %}
+              <img src="{{ item.thumbnail_url }}" alt="Preview for {{ item.original_file_name }}">
+              {% else %}
+              <div class="file-placeholder">{{ item.file_label }}</div>
+              {% endif %}
+            </div>
+
+            <div class="review-meta">
+              <strong>{{ item.original_file_name }}</strong>
+              <span>{{ item.display_size_mb }} MB</span>
+              {% if item.width and item.height %}
+              <span>{{ item.width }} x {{ item.height }}</span>
+              {% endif %}
+              {% if item.display_duration %}
+              <span>Duration: {{ item.display_duration }}</span>
+              {% endif %}
+              {% if item.display_page_count %}
+              <span>Pages: {{ item.display_page_count }}</span>
+              {% endif %}
+              <span>{{ item.source_relative_path }}</span>
+              {% if item.preview_error %}
+              <span class="error-text">Preview fallback: {{ item.preview_error }}</span>
+              {% endif %}
+              {% if item.saved_path %}
+              <span>Saved/Archived: {{ item.saved_path }}</span>
+              {% endif %}
+              {% if item.duplicate_saved_path %}
+              <span>Duplicate of: {{ item.duplicate_saved_path }}</span>
+              {% endif %}
+              {% if item.error_message %}
+              <span class="error-text">{{ item.error_message }}</span>
+              {% endif %}
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state review-empty-state">
+          All items in this batch have been processed. Expand the completed section below if you want to review what was already saved or skipped.
+        </p>
+        {% endif %}
+
+        {% if completed_items %}
+        <details class="review-completed-shell">
+          <summary>Completed ({{ completed_count }})</summary>
+          <div class="review-grid review-grid-completed">
+            {% for item in completed_items %}
+            <article class="review-card review-card-complete">
+              <div class="review-card-header">
+                <span class="status-pill">{{ item.status }}</span>
+                <span class="status-pill">{{ item.source_label or 'Inbox' }}</span>
+              </div>
+
+              <div class="review-preview">
+                {% if item.thumbnail_url %}
+                <img src="{{ item.thumbnail_url }}" alt="Preview for {{ item.original_file_name }}">
+                {% else %}
+                <div class="file-placeholder">{{ item.file_label }}</div>
+                {% endif %}
+              </div>
+
+              <div class="review-meta">
+                <strong>{{ item.original_file_name }}</strong>
+                <span>{{ item.display_size_mb }} MB</span>
+                {% if item.width and item.height %}
+                <span>{{ item.width }} x {{ item.height }}</span>
+                {% endif %}
+                {% if item.display_duration %}
+                <span>Duration: {{ item.display_duration }}</span>
+                {% endif %}
+                {% if item.display_page_count %}
+                <span>Pages: {{ item.display_page_count }}</span>
+                {% endif %}
+                <span>{{ item.source_relative_path }}</span>
+                {% if item.preview_error %}
+                <span class="error-text">Preview fallback: {{ item.preview_error }}</span>
+                {% endif %}
+                {% if item.saved_path %}
+                <span>Saved/Archived: {{ item.saved_path }}</span>
+                {% endif %}
+                {% if item.duplicate_saved_path %}
+                <span>Duplicate of: {{ item.duplicate_saved_path }}</span>
+                {% endif %}
+                {% if item.error_message %}
+                <span class="error-text">{{ item.error_message }}</span>
+                {% endif %}
+              </div>
+            </article>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+        {% else %}
         <div class="review-grid">
           {% for item in items %}
           <article class="review-card {% if item.status not in ['pending_review', 'notified', 'review_in_progress'] %}review-card-complete{% endif %}">
@@ -143,6 +255,7 @@
           </article>
           {% endfor %}
         </div>
+        {% endif %}
 
         {% if batch_token %}
         <div class="review-toolbar review-toolbar-bottom">
@@ -229,6 +342,7 @@
     </section>
   </main>
 
+  {% if batch_token %}
   <script>
     const reviewCategoryCatalog = {{ review_category_catalog_json | safe }};
     const selectAllButton = document.getElementById("select-all");
@@ -549,5 +663,6 @@
       });
     }
   </script>
+  {% endif %}
 </body>
 </html>

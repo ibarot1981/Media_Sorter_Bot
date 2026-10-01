@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -22,6 +24,7 @@ from src.config import (
     ServerConfig,
     WebUIConfig,
     load_config,
+    normalize_trusted_networks,
     save_config,
 )
 from src.database import Database
@@ -33,6 +36,21 @@ from src.utils import clean_name, ensure_directory, split_folder_input
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+def _is_trusted_client(
+    client_host: str | None,
+    trusted_networks: tuple,
+) -> bool:
+    if not client_host:
+        return False
+    try:
+        address: IPv4Address | IPv6Address = ip_address(client_host.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(address, IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return any(address.version == network.version and address in network for network in trusted_networks)
 
 
 def create_web_app(
@@ -49,6 +67,16 @@ def create_web_app(
     review_queue = ReviewQueueService(config, config_path, database, storage, duplicate_checker)
 
     app = FastAPI(title="Media Sorter Bot Config Editor")
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
+    trusted_networks = tuple(ip_network(value, strict=False) for value in config.webui.trusted_networks)
+
+    @app.middleware("http")
+    async def restrict_to_trusted_networks(request: Request, call_next):
+        client_host = request.client.host if request.client else None
+        if not _is_trusted_client(client_host, trusted_networks):
+            return PlainTextResponse("Web UI access is restricted to trusted private networks.", status_code=403)
+        return await call_next(request)
+
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
     @app.get("/", response_class=HTMLResponse)
@@ -308,12 +336,22 @@ def _render_review_template(
     success_message: str | None,
     error_message: str | None,
 ) -> HTMLResponse:
-    items = review_queue.get_batch_items(batch_token) if batch_token else review_queue.list_dashboard_items(limit=100)
+    review_queue.refresh_runtime_config()
+    items = (
+        review_queue.get_batch_items(batch_token, refresh_config=False)
+        if batch_token
+        else review_queue.list_dashboard_items(limit=100, refresh_config=False)
+    )
     pending_items = [item for item in items if item["status"] in {"pending_review", "notified", "review_in_progress"}]
-    pending_batches = review_queue.list_pending_batches(limit=20) if not batch_token else []
-    recent_destinations = review_queue.list_recent_destinations(limit=8)
-    favorite_destinations = review_queue.list_favorite_destinations(limit=10)
-    category_catalog = _build_review_category_catalog(review_queue.config.categories)
+    completed_items = [item for item in items if item["status"] not in {"pending_review", "notified", "review_in_progress"}]
+    pending_batches = review_queue.list_pending_batches(limit=20, refresh_config=False) if not batch_token else []
+    recent_destinations = (
+        review_queue.list_recent_destinations(limit=8, refresh_config=False) if batch_token else []
+    )
+    favorite_destinations = (
+        review_queue.list_favorite_destinations(limit=10, refresh_config=False) if batch_token else []
+    )
+    category_catalog = _build_review_category_catalog(review_queue.config.categories) if batch_token else []
     return TEMPLATES.TemplateResponse(
         request=request,
         name="review_queue.html",
@@ -322,15 +360,16 @@ def _render_review_template(
             "batch_token": batch_token,
             "items": items,
             "pending_items": pending_items,
+            "completed_items": completed_items,
             "pending_batches": pending_batches,
             "recent_destinations": recent_destinations,
             "favorite_destinations": favorite_destinations,
-            "destination_options": review_queue.build_destination_options(),
             "review_category_catalog_json": json.dumps(category_catalog),
             "success_message": success_message,
             "error_message": error_message,
             "total_items": len(items),
             "pending_count": len(pending_items),
+            "completed_count": len(completed_items),
         },
     )
 
@@ -449,6 +488,13 @@ def _build_config_from_form(form) -> AppConfig:
         webui=WebUIConfig(
             host=str(form.get("webui_host", "127.0.0.1")).strip() or "127.0.0.1",
             port=int(str(form.get("webui_port", "8080")).strip() or "8080"),
+            trusted_networks=normalize_trusted_networks(
+                [
+                    line.strip()
+                    for line in str(form.get("webui_trusted_networks", "")).replace(",", "\n").splitlines()
+                    if line.strip()
+                ]
+            ),
         ),
         review_queue=ReviewQueueConfig(
             enabled=str(form.get("review_queue_enabled", "")) == "on",
@@ -587,6 +633,7 @@ def _validate_config(config: AppConfig) -> None:
         raise ValueError("Set either a global base_storage_path or at least one category root_path.")
     if config.behavior.duplicate_action not in {"skip", "ask", "save_anyway"}:
         raise ValueError("duplicate_action must be one of: skip, ask, save_anyway.")
+    normalize_trusted_networks(config.webui.trusted_networks)
     if config.local_bot_api.enabled:
         if not config.local_bot_api.base_url or not config.local_bot_api.base_file_url:
             raise ValueError("local Bot API base_url and base_file_url are required when enabled.")
