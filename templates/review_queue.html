@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrf_token }}">
   <title>Media Sorter Workspace</title>
-  <link rel="stylesheet" href="/static/style.css?v=ajax-review-3">
+  <link rel="stylesheet" href="/static/style.css?v=ajax-review-4">
   <script src="/static/review.js?v=lazy-tree-1" defer></script>
 </head>
 <body class="app-body">
@@ -22,11 +22,7 @@
 
   <main class="workspace-page" id="review-workspace" data-initial-batch="{{ batch_token or '' }}">
     <header class="workspace-header">
-      <div>
-        <p class="eyebrow">Syncthing inbox</p>
-        <h1>Review workspace</h1>
-        <p>Select files from any batch, choose a configured destination, and move them without leaving the page.</p>
-      </div>
+      <h1>Review workspace</h1>
       <div class="workspace-live-status" id="workspace-status" role="status" aria-live="polite">
         <span class="status-dot"></span>
         <span>Loading queue…</span>
