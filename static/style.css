@@ -1051,6 +1051,27 @@ button.document-preview { cursor: zoom-in; }
 .destination-folder[open] > summary > .folder-icon { transform: rotate(90deg); }
 .destination-children { display: grid; }
 
+.destination-loading,
+.destination-limit-hint,
+.destination-load-error {
+  margin: 3px 8px 3px 26px;
+  padding: 7px 9px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.destination-load-error {
+  border: 0;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #9f1239;
+  text-align: left;
+}
+
+.destination-load-error:hover { background: #ffe4e6; }
+.destination-limit-hint { margin: 8px; border-top: 1px solid rgba(87, 111, 118, 0.14); }
+.destination-error { color: #9f1239; }
+
 .destination-row {
   width: 100%;
   min-width: 0;

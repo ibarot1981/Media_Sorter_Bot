@@ -103,6 +103,30 @@ class ReviewApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual([item["id"] for item in payload["items"]], [item_id])
         self.assertEqual(payload["categories"][0]["name"], "Documents")
+        self.assertTrue(payload["categories"][0]["has_children"])
+        self.assertNotIn("children", payload["categories"][0])
+
+    def test_destination_tree_loads_children_and_searches_on_demand(self) -> None:
+        children = self.client.get(
+            "/api/v1/review/destinations",
+            params={"category": "Documents", "parent": ""},
+        )
+        self.assertEqual(children.status_code, 200)
+        self.assertEqual(
+            children.json()["items"],
+            [{"name": "2026", "path": "2026", "has_children": False}],
+        )
+
+        search = self.client.get("/api/v1/review/destinations", params={"q": "2026"})
+        self.assertEqual(search.status_code, 200)
+        self.assertEqual(search.json()["items"][0]["value"], "Documents / 2026")
+
+    def test_unknown_destination_parent_returns_not_found(self) -> None:
+        response = self.client.get(
+            "/api/v1/review/destinations",
+            params={"category": "Documents", "parent": "missing"},
+        )
+        self.assertEqual(response.status_code, 404)
 
     def test_move_requires_csrf_token(self) -> None:
         item_id = self.add_item()

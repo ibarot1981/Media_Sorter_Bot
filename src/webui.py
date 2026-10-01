@@ -335,11 +335,25 @@ def create_web_app(
         return {
             "items": [_serialize_review_item(item) for item in items],
             "batches": batches,
-            "categories": _build_review_category_catalog(review_queue.config.categories),
+            "categories": _build_review_category_roots(review_queue.config.categories),
             "recent_destinations": review_queue.list_recent_destinations(limit=8, refresh_config=False),
             "favorite_destinations": review_queue.list_favorite_destinations(limit=12, refresh_config=False),
             "processing_item_ids": review_jobs.reserved_item_ids(),
         }
+
+    @app.get("/api/v1/review/destinations")
+    async def review_destinations(category: str = "", parent: str = "", q: str = ""):
+        if len(category) > 200 or len(parent) > 1000 or len(q) > 200:
+            raise HTTPException(status_code=400, detail="Destination query is too long.")
+        if q.strip():
+            matches, truncated = _search_review_destinations(review_queue.config.categories, q, limit=100)
+            return {"items": matches, "truncated": truncated}
+        if not category.strip():
+            return {"items": _build_review_category_roots(review_queue.config.categories), "truncated": False}
+        children = _get_review_destination_children(review_queue.config.categories, category, parent)
+        if children is None:
+            raise HTTPException(status_code=404, detail="Destination folder not found.")
+        return {"items": children, "truncated": False}
 
     @app.post("/api/v1/review/move", status_code=202)
     async def start_review_move(
@@ -499,34 +513,79 @@ def _resolve_review_destination(form) -> str:
     return " / ".join(destination_parts)
 
 
-def _build_review_category_catalog(categories: list[CategoryConfig]) -> list[dict[str, Any]]:
-    catalog: list[dict[str, Any]] = []
+def _build_review_category_roots(categories: list[CategoryConfig]) -> list[dict[str, Any]]:
+    return [
+        {"name": category.name, "path": "", "has_children": bool(category.folders)}
+        for category in categories
+    ]
+
+
+def _get_review_destination_children(
+    categories: list[CategoryConfig],
+    category_name: str,
+    parent_path: str,
+) -> list[dict[str, Any]] | None:
+    category = next((item for item in categories if item.name == category_name), None)
+    if category is None:
+        return None
+
+    nodes = category.folders
+    path_parts = [part.strip() for part in parent_path.split("/") if part.strip()]
+    for part in path_parts:
+        match = next((node for node in nodes if node.name == part), None)
+        if match is None:
+            return None
+        nodes = match.folders
+
+    prefix = " / ".join(path_parts)
+    return [
+        {
+            "name": node.name,
+            "path": " / ".join(part for part in (prefix, node.name) if part),
+            "has_children": bool(node.folders),
+        }
+        for node in nodes
+    ]
+
+
+def _search_review_destinations(
+    categories: list[CategoryConfig],
+    query: str,
+    *,
+    limit: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    normalized_query = query.strip().casefold()
+    matches: list[dict[str, Any]] = []
+    truncated = False
+
+    def add(value: str, label: str, depth: int, has_children: bool) -> None:
+        nonlocal truncated
+        if normalized_query not in value.casefold():
+            return
+        if len(matches) >= limit:
+            truncated = True
+            return
+        matches.append(
+            {
+                "name": label,
+                "label": value,
+                "value": value,
+                "depth": depth,
+                "has_children": has_children,
+            }
+        )
+
+    def visit(category_name: str, nodes: list[FolderNode], prefix: list[str]) -> None:
+        for node in nodes:
+            current_path = [*prefix, node.name]
+            value = " / ".join([category_name, *current_path])
+            add(value, node.name, len(current_path), bool(node.folders))
+            visit(category_name, node.folders, current_path)
+
     for category in categories:
-        catalog.append(
-            {
-                "name": category.name,
-                "path": "",
-                "children": _build_review_tree_nodes(category.folders, []),
-            }
-        )
-    return catalog
-
-
-def _build_review_tree_nodes(
-    nodes: list[FolderNode],
-    prefix: list[str],
-    ) -> list[dict[str, Any]]:
-    tree_nodes: list[dict[str, Any]] = []
-    for node in nodes:
-        current_path = [*prefix, node.name]
-        tree_nodes.append(
-            {
-                "name": node.name,
-                "path": " / ".join(current_path),
-                "children": _build_review_tree_nodes(node.folders, current_path),
-            }
-        )
-    return tree_nodes
+        add(category.name, category.name, 0, bool(category.folders))
+        visit(category.name, category.folders, [])
+    return matches, truncated
 
 
 def _parse_allowed_user_ids(raw_value: str) -> list[int]:

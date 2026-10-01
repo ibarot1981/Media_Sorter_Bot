@@ -39,6 +39,7 @@
     processingIds: new Set(),
     destination: "",
     initialBatch: root.dataset.initialBatch || "",
+    destinationSearchSequence: 0,
   };
 
   function setStatus(message, tone = "ready") {
@@ -220,8 +221,9 @@
     return row;
   }
 
-  function renderDestinations() {
+  async function renderDestinations() {
     const query = elements.destinationSearch.value.trim().toLowerCase();
+    const searchSequence = ++state.destinationSearchSequence;
     elements.destinationTree.replaceChildren();
     elements.destinationShortcuts.replaceChildren();
 
@@ -236,14 +238,33 @@
       shortcuts.forEach((item) => elements.destinationShortcuts.appendChild(destinationButton(item.destination_value, item.label, true)));
     }
 
-    state.categories.forEach((category) => {
-      if (query) {
-        const matches = flattenCategory(category).filter((entry) => entry.label.toLowerCase().includes(query));
-        matches.forEach((entry) => elements.destinationTree.appendChild(destinationButton(entry.value, entry.label, false, entry.depth)));
-        return;
+    if (query) {
+      const loading = document.createElement("div");
+      loading.className = "workspace-empty compact";
+      loading.textContent = "Searching destinations…";
+      elements.destinationTree.appendChild(loading);
+      try {
+        const params = new URLSearchParams({ q: query });
+        const payload = await fetchJson(`/api/v1/review/destinations?${params}`);
+        if (searchSequence !== state.destinationSearchSequence) return;
+        elements.destinationTree.replaceChildren();
+        (payload.items || []).forEach((entry) => {
+          elements.destinationTree.appendChild(destinationButton(entry.value, entry.label, false, entry.depth));
+        });
+        if (payload.truncated) {
+          const hint = document.createElement("div");
+          hint.className = "destination-limit-hint";
+          hint.textContent = "Showing the first 100 matches. Refine the search to narrow the list.";
+          elements.destinationTree.appendChild(hint);
+        }
+      } catch (error) {
+        if (searchSequence !== state.destinationSearchSequence) return;
+        elements.destinationTree.replaceChildren();
+        showDestinationError(error.message);
       }
-      elements.destinationTree.appendChild(buildCategoryTree(category));
-    });
+    } else {
+      state.categories.forEach((category) => elements.destinationTree.appendChild(buildCategoryTree(category)));
+    }
     if (!elements.destinationTree.children.length) {
       const empty = document.createElement("div");
       empty.className = "workspace-empty compact";
@@ -254,9 +275,9 @@
   }
 
   function buildCategoryTree(category) {
+    if (!category.has_children) return destinationButton(category.name, category.name, false);
     const details = document.createElement("details");
     details.className = "destination-category";
-    details.open = destinationContains(category.name);
     const summary = document.createElement("summary");
     const folder = document.createElement("span");
     folder.className = "folder-icon";
@@ -267,22 +288,24 @@
     details.appendChild(summary);
     const children = document.createElement("div");
     children.className = "destination-children";
-    appendDestinationChildren(children, category.name, category.children || [], 1);
+    children.dataset.loaded = "false";
     details.appendChild(children);
+    details.addEventListener("toggle", () => {
+      if (details.open) loadDestinationChildren(category.name, "", children, 1);
+    });
     return details;
   }
 
-  function appendDestinationChildren(container, categoryName, nodes, depth) {
+  function appendDestinationNodes(container, categoryName, nodes, depth) {
     nodes.forEach((node) => {
       const value = `${categoryName} / ${node.path}`;
-      if (!node.children?.length) {
+      if (!node.has_children) {
         container.appendChild(destinationButton(value, node.name, false, depth));
         return;
       }
 
       const details = document.createElement("details");
       details.className = "destination-folder";
-      details.open = destinationContains(value);
       const summary = document.createElement("summary");
       const folder = document.createElement("span");
       folder.className = "folder-icon";
@@ -291,24 +314,53 @@
       details.appendChild(summary);
       const children = document.createElement("div");
       children.className = "destination-children";
-      appendDestinationChildren(children, categoryName, node.children, depth + 1);
+      children.dataset.loaded = "false";
       details.appendChild(children);
+      details.addEventListener("toggle", () => {
+        if (details.open) loadDestinationChildren(categoryName, node.path, children, depth + 1);
+      });
       container.appendChild(details);
     });
   }
 
-  function destinationContains(value) {
-    return state.destination === value || state.destination.startsWith(`${value} / `);
+  async function loadDestinationChildren(categoryName, parentPath, container, depth) {
+    if (container.dataset.loaded !== "false") return;
+    container.dataset.loaded = "loading";
+    const loading = document.createElement("div");
+    loading.className = "destination-loading";
+    loading.textContent = "Loading folders…";
+    container.appendChild(loading);
+    try {
+      const params = new URLSearchParams({ category: categoryName, parent: parentPath });
+      const payload = await fetchJson(`/api/v1/review/destinations?${params}`);
+      container.replaceChildren();
+      appendDestinationNodes(container, categoryName, payload.items || [], depth);
+      if (!container.children.length) {
+        const empty = document.createElement("div");
+        empty.className = "destination-loading";
+        empty.textContent = "No subfolders";
+        container.appendChild(empty);
+      }
+      container.dataset.loaded = "true";
+      syncDestinationSelection();
+    } catch (error) {
+      container.replaceChildren();
+      container.dataset.loaded = "false";
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "destination-load-error";
+      retry.textContent = `Could not load folders. Click to retry.`;
+      retry.title = error.message;
+      retry.addEventListener("click", () => loadDestinationChildren(categoryName, parentPath, container, depth));
+      container.appendChild(retry);
+    }
   }
 
-  function flattenCategory(category) {
-    const result = [{ value: category.name, label: category.name, depth: 0 }];
-    const visit = (nodes, depth) => nodes.forEach((node) => {
-      result.push({ value: `${category.name} / ${node.path}`, label: `${category.name} / ${node.path}`, depth });
-      visit(node.children || [], depth + 1);
-    });
-    visit(category.children || [], 1);
-    return result;
+  function showDestinationError(message) {
+    const error = document.createElement("div");
+    error.className = "workspace-empty compact destination-error";
+    error.textContent = message;
+    elements.destinationTree.appendChild(error);
   }
 
   function destinationButton(value, label, shortcut = false, depth = 0) {
@@ -316,6 +368,7 @@
     button.type = "button";
     button.className = shortcut ? "destination-chip" : "destination-row";
     button.classList.toggle("selected", state.destination === value);
+    button.dataset.destination = value;
     button.textContent = label;
     if (!shortcut) button.style.setProperty("--tree-depth", String(depth));
     button.title = value;
@@ -323,10 +376,16 @@
       event.preventDefault();
       event.stopPropagation();
       state.destination = value;
-      renderDestinations();
+      syncDestinationSelection();
       updateActionState();
     });
     return button;
+  }
+
+  function syncDestinationSelection() {
+    document.querySelectorAll("[data-destination]").forEach((button) => {
+      button.classList.toggle("selected", button.dataset.destination === state.destination);
+    });
   }
 
   function finalDestination() {
@@ -405,7 +464,11 @@
 
   elements.search.addEventListener("input", renderItems);
   elements.batchFilter.addEventListener("change", renderItems);
-  elements.destinationSearch.addEventListener("input", renderDestinations);
+  let destinationSearchTimer = null;
+  elements.destinationSearch.addEventListener("input", () => {
+    clearTimeout(destinationSearchTimer);
+    destinationSearchTimer = setTimeout(() => renderDestinations(), 180);
+  });
   elements.newFolderName.addEventListener("input", updateActionState);
   elements.selectVisible.addEventListener("click", () => {
     getVisibleItems().filter((item) => !state.processingIds.has(item.id)).forEach((item) => state.selectedIds.add(item.id));

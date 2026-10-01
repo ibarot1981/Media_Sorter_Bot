@@ -376,6 +376,7 @@ The Review navigation opens an AJAX-driven, two-pane workspace:
 
 - select files from multiple pending batches in the left pane
 - browse configured categories and nested folders in the right pane
+- expand large destination trees on demand, with server-side destination search
 - click image thumbnails to open the full image without leaving the queue
 - move the selection in a background job without refreshing the page
 - successful moves disappear from the pending workspace; failed moves remain selectable and show their error
