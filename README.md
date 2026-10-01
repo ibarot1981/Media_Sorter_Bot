@@ -372,6 +372,14 @@ It lets you edit:
 - delete-after-save behavior
 - import selected category trees from disk into YAML
 
+The Review navigation opens an AJAX-driven, two-pane workspace:
+
+- select files from multiple pending batches in the left pane
+- browse configured categories and nested folders in the right pane
+- click image thumbnails to open the full image without leaving the queue
+- move the selection in a background job without refreshing the page
+- successful moves disappear from the pending workspace; failed moves remain selectable and show their error
+
 The category editor now uses a tree-style navigator plus a detail panel, so browsing/editing folders matches the mobile review destination picker more closely.
 
 The mobile review UI also accepts slash-separated folder creation, so entering `folder1/folder2` while creating a new folder will create `folder1` with `folder2` inside it under the selected destination.
@@ -465,6 +473,9 @@ Implemented already:
 - favorite destination shortcuts
 - manual pending-batch reopening from Telegram without reminder spam
 - item-first review flow on mobile
+- cross-batch selection in a two-pane Explorer-style review workspace
+- background AJAX moves with per-file success and failure handling
+- full-image viewing from clickable image thumbnails
 
 Still pending from the Syncthing/mobile-review roadmap:
 
