@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from pathlib import Path
+import secrets
+from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
 from src.config import (
     AppConfig,
@@ -30,12 +33,18 @@ from src.config import (
 from src.database import Database
 from src.duplicates import DuplicateChecker
 from src.review_queue import ReviewQueueService
+from src.review_jobs import ReviewJobStore
 from src.storage import StorageService
 from src.utils import clean_name, ensure_directory, split_folder_input
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+class ReviewMoveRequest(BaseModel):
+    item_ids: list[int] = Field(min_length=1, max_length=500)
+    destination: str = Field(min_length=1, max_length=1000)
 
 
 def _is_trusted_client(
@@ -65,8 +74,10 @@ def create_web_app(
     storage = storage or StorageService(config)
     duplicate_checker = duplicate_checker or DuplicateChecker(database, config.behavior.duplicate_action)
     review_queue = ReviewQueueService(config, config_path, database, storage, duplicate_checker)
+    review_jobs = ReviewJobStore()
 
     app = FastAPI(title="Media Sorter Bot Config Editor")
+    app.state.csrf_token = secrets.token_urlsafe(32)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
     trusted_networks = tuple(ip_network(value, strict=False) for value in config.webui.trusted_networks)
 
@@ -197,7 +208,7 @@ def create_web_app(
             result = review_queue.save_items(item_ids, destination_value)
             success_message = f"Saved {result['saved_count']} file(s) to {result['destination']}."
             if result["failed_count"]:
-                success_message += f" {result['failed_count']} file(s) failed and were marked as errors."
+                success_message += f" {result['failed_count']} file(s) failed and remain pending for retry."
             return _render_review_template(
                 request,
                 review_queue,
@@ -225,7 +236,7 @@ def create_web_app(
             result = review_queue.skip_items(item_ids)
             success_message = f"Skipped {result['skipped_count']} file(s)."
             if result["failed_count"]:
-                success_message += f" {result['failed_count']} file(s) failed and were marked as errors."
+                success_message += f" {result['failed_count']} file(s) failed and remain pending for retry."
             return _render_review_template(
                 request,
                 review_queue,
@@ -303,6 +314,86 @@ def create_web_app(
             return HTMLResponse(status_code=404, content="Thumbnail not found.")
         return FileResponse(thumbnail_path)
 
+    @app.get("/review/media/{item_id}")
+    async def review_media(item_id: int):
+        item = review_queue.database.get_pending_item(item_id)
+        if not item or str(item.get("status")) not in {"pending_review", "notified", "review_in_progress"}:
+            return HTMLResponse(status_code=404, content="Item not found.")
+        mime_type = str(item.get("mime_type", "") or "")
+        if not mime_type.startswith("image/"):
+            return HTMLResponse(status_code=415, content="A full preview is only available for images.")
+        source_path = Path(str(item.get("source_path", "") or ""))
+        if not source_path.is_file():
+            return HTMLResponse(status_code=404, content="Source image not found.")
+        return FileResponse(source_path, media_type=mime_type)
+
+    @app.get("/api/v1/review/workspace")
+    async def review_workspace():
+        review_queue.refresh_runtime_config()
+        items = review_queue.list_dashboard_items(limit=500, refresh_config=False)
+        batches = review_queue.list_pending_batches(limit=100, refresh_config=False)
+        return {
+            "items": [_serialize_review_item(item) for item in items],
+            "batches": batches,
+            "categories": _build_review_category_roots(review_queue.config.categories),
+            "recent_destinations": review_queue.list_recent_destinations(limit=8, refresh_config=False),
+            "favorite_destinations": review_queue.list_favorite_destinations(limit=12, refresh_config=False),
+            "processing_item_ids": review_jobs.reserved_item_ids(),
+        }
+
+    @app.get("/api/v1/review/destinations")
+    async def review_destinations(category: str = "", parent: str = "", q: str = ""):
+        if len(category) > 200 or len(parent) > 1000 or len(q) > 200:
+            raise HTTPException(status_code=400, detail="Destination query is too long.")
+        if q.strip():
+            matches, truncated = _search_review_destinations(review_queue.config.categories, q, limit=100)
+            return {"items": matches, "truncated": truncated}
+        if not category.strip():
+            return {"items": _build_review_category_roots(review_queue.config.categories), "truncated": False}
+        children = _get_review_destination_children(review_queue.config.categories, category, parent)
+        if children is None:
+            raise HTTPException(status_code=404, detail="Destination folder not found.")
+        return {"items": children, "truncated": False}
+
+    @app.post("/api/v1/review/move", status_code=202)
+    async def start_review_move(
+        payload: ReviewMoveRequest,
+        request: Request,
+        background_tasks: BackgroundTasks,
+    ):
+        _require_csrf(request)
+        item_ids = list(dict.fromkeys(payload.item_ids))
+        missing_or_completed = []
+        for item_id in item_ids:
+            item = review_queue.database.get_pending_item(item_id)
+            if not item or str(item.get("status")) not in {"pending_review", "notified", "review_in_progress"}:
+                missing_or_completed.append(item_id)
+        if missing_or_completed:
+            raise HTTPException(status_code=409, detail="Some selected files are no longer available for review.")
+
+        category_name, folder_path = review_queue.parse_destination_value(payload.destination)
+        destination = " / ".join([category_name, *folder_path])
+        try:
+            job = review_jobs.create_move_job(item_ids, destination)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        background_tasks.add_task(
+            _execute_review_move_job,
+            review_jobs,
+            str(job["id"]),
+            review_queue,
+            item_ids,
+            destination,
+        )
+        return job
+
+    @app.get("/api/v1/review/jobs/{job_id}")
+    async def review_job(job_id: str):
+        job = review_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Review job not found.")
+        return job
+
     return app
 
 
@@ -336,42 +427,57 @@ def _render_review_template(
     success_message: str | None,
     error_message: str | None,
 ) -> HTMLResponse:
-    review_queue.refresh_runtime_config()
-    items = (
-        review_queue.get_batch_items(batch_token, refresh_config=False)
-        if batch_token
-        else review_queue.list_dashboard_items(limit=100, refresh_config=False)
-    )
-    pending_items = [item for item in items if item["status"] in {"pending_review", "notified", "review_in_progress"}]
-    completed_items = [item for item in items if item["status"] not in {"pending_review", "notified", "review_in_progress"}]
-    pending_batches = review_queue.list_pending_batches(limit=20, refresh_config=False) if not batch_token else []
-    recent_destinations = (
-        review_queue.list_recent_destinations(limit=8, refresh_config=False) if batch_token else []
-    )
-    favorite_destinations = (
-        review_queue.list_favorite_destinations(limit=10, refresh_config=False) if batch_token else []
-    )
-    category_catalog = _build_review_category_catalog(review_queue.config.categories) if batch_token else []
     return TEMPLATES.TemplateResponse(
         request=request,
         name="review_queue.html",
         context={
             "request": request,
             "batch_token": batch_token,
-            "items": items,
-            "pending_items": pending_items,
-            "completed_items": completed_items,
-            "pending_batches": pending_batches,
-            "recent_destinations": recent_destinations,
-            "favorite_destinations": favorite_destinations,
-            "review_category_catalog_json": json.dumps(category_catalog),
+            "csrf_token": request.app.state.csrf_token,
             "success_message": success_message,
             "error_message": error_message,
-            "total_items": len(items),
-            "pending_count": len(pending_items),
-            "completed_count": len(completed_items),
         },
     )
+
+
+def _require_csrf(request: Request) -> None:
+    supplied_token = request.headers.get("X-CSRF-Token", "")
+    expected_token = str(request.app.state.csrf_token)
+    if not supplied_token or not secrets.compare_digest(supplied_token, expected_token):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token.")
+
+
+def _execute_review_move_job(
+    jobs: ReviewJobStore,
+    job_id: str,
+    review_queue: ReviewQueueService,
+    item_ids: list[int],
+    destination: str,
+) -> None:
+    jobs.run(job_id, lambda: review_queue.save_items(item_ids, destination))
+
+
+def _serialize_review_item(item: dict[str, Any]) -> dict[str, Any]:
+    mime_type = str(item.get("mime_type", "") or "")
+    return {
+        "id": int(item["id"]),
+        "original_file_name": str(item.get("original_file_name", "")),
+        "batch_token": str(item.get("batch_token", "") or ""),
+        "status": str(item.get("status", "")),
+        "source_label": str(item.get("source_label", "") or "Inbox"),
+        "source_relative_path": str(item.get("source_relative_path", "") or ""),
+        "mime_type": mime_type,
+        "file_label": str(item.get("file_label", "FILE")),
+        "thumbnail_url": str(item.get("thumbnail_url", "") or ""),
+        "media_url": f"/review/media/{int(item['id'])}" if mime_type.startswith("image/") else "",
+        "display_size_mb": item.get("display_size_mb", 0),
+        "width": item.get("width"),
+        "height": item.get("height"),
+        "display_duration": str(item.get("display_duration", "") or ""),
+        "display_page_count": item.get("display_page_count", 0),
+        "received_at": str(item.get("received_at", "") or ""),
+        "error_message": str(item.get("error_message", "") or ""),
+    }
 
 
 def _resolve_review_destination(form) -> str:
@@ -407,34 +513,79 @@ def _resolve_review_destination(form) -> str:
     return " / ".join(destination_parts)
 
 
-def _build_review_category_catalog(categories: list[CategoryConfig]) -> list[dict[str, Any]]:
-    catalog: list[dict[str, Any]] = []
+def _build_review_category_roots(categories: list[CategoryConfig]) -> list[dict[str, Any]]:
+    return [
+        {"name": category.name, "path": "", "has_children": bool(category.folders)}
+        for category in categories
+    ]
+
+
+def _get_review_destination_children(
+    categories: list[CategoryConfig],
+    category_name: str,
+    parent_path: str,
+) -> list[dict[str, Any]] | None:
+    category = next((item for item in categories if item.name == category_name), None)
+    if category is None:
+        return None
+
+    nodes = category.folders
+    path_parts = [part.strip() for part in parent_path.split("/") if part.strip()]
+    for part in path_parts:
+        match = next((node for node in nodes if node.name == part), None)
+        if match is None:
+            return None
+        nodes = match.folders
+
+    prefix = " / ".join(path_parts)
+    return [
+        {
+            "name": node.name,
+            "path": " / ".join(part for part in (prefix, node.name) if part),
+            "has_children": bool(node.folders),
+        }
+        for node in nodes
+    ]
+
+
+def _search_review_destinations(
+    categories: list[CategoryConfig],
+    query: str,
+    *,
+    limit: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    normalized_query = query.strip().casefold()
+    matches: list[dict[str, Any]] = []
+    truncated = False
+
+    def add(value: str, label: str, depth: int, has_children: bool) -> None:
+        nonlocal truncated
+        if normalized_query not in value.casefold():
+            return
+        if len(matches) >= limit:
+            truncated = True
+            return
+        matches.append(
+            {
+                "name": label,
+                "label": value,
+                "value": value,
+                "depth": depth,
+                "has_children": has_children,
+            }
+        )
+
+    def visit(category_name: str, nodes: list[FolderNode], prefix: list[str]) -> None:
+        for node in nodes:
+            current_path = [*prefix, node.name]
+            value = " / ".join([category_name, *current_path])
+            add(value, node.name, len(current_path), bool(node.folders))
+            visit(category_name, node.folders, current_path)
+
     for category in categories:
-        catalog.append(
-            {
-                "name": category.name,
-                "path": "",
-                "children": _build_review_tree_nodes(category.folders, []),
-            }
-        )
-    return catalog
-
-
-def _build_review_tree_nodes(
-    nodes: list[FolderNode],
-    prefix: list[str],
-    ) -> list[dict[str, Any]]:
-    tree_nodes: list[dict[str, Any]] = []
-    for node in nodes:
-        current_path = [*prefix, node.name]
-        tree_nodes.append(
-            {
-                "name": node.name,
-                "path": " / ".join(current_path),
-                "children": _build_review_tree_nodes(node.folders, current_path),
-            }
-        )
-    return tree_nodes
+        add(category.name, category.name, 0, bool(category.folders))
+        visit(category.name, category.folders, [])
+    return matches, truncated
 
 
 def _parse_allowed_user_ids(raw_value: str) -> list[int]:

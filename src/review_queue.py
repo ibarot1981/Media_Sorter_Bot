@@ -348,9 +348,10 @@ class ReviewQueueService:
 
             source_path = Path(str(item["source_path"]))
             if not source_path.exists():
+                retry_status = str(item["status"])
                 self.database.update_pending_status(
                     item_id,
-                    status="error",
+                    status=retry_status,
                     error_message="Source file was missing when trying to finalize review item.",
                     reviewed_by_user_id=reviewed_by_user_id,
                 )
@@ -397,7 +398,7 @@ class ReviewQueueService:
                 self.logger.exception("Failed to finalize pending review item %s: %s", item_id, exc)
                 self.database.update_pending_status(
                     item_id,
-                    status="error",
+                    status=str(item["status"]),
                     error_message=str(exc),
                     reviewed_by_user_id=reviewed_by_user_id,
                 )
@@ -426,7 +427,7 @@ class ReviewQueueService:
             if not source_path.exists():
                 self.database.update_pending_status(
                     item_id,
-                    status="error",
+                    status=str(item["status"]),
                     error_message="Source file was missing when trying to skip review item.",
                     reviewed_by_user_id=reviewed_by_user_id,
                 )
@@ -447,7 +448,7 @@ class ReviewQueueService:
                 self.logger.exception("Failed to skip pending review item %s: %s", item_id, exc)
                 self.database.update_pending_status(
                     item_id,
-                    status="error",
+                    status=str(item["status"]),
                     error_message=str(exc),
                     reviewed_by_user_id=reviewed_by_user_id,
                 )
